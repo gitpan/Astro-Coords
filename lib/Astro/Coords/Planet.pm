@@ -19,10 +19,12 @@ for planets..
 use 5.006;
 use strict;
 use warnings;
+use Carp;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use Astro::SLA ();
+use Astro::Coords::Angle;
 use base qw/ Astro::Coords /;
 
 use overload '""' => "stringify";
@@ -62,7 +64,9 @@ sub new {
   # Check that we have a valid planet
   return undef unless exists $PLANET{$planet};
 
-  bless { planet => $planet }, $class;
+  bless { planet => $planet,
+	  diameter => undef,
+	}, $class;
 
 }
 
@@ -162,25 +166,143 @@ sub summary {
   return sprintf("%-16s  %-12s  %-13s PLANET",$name,'','');
 }
 
-=item B<_apparent>
+=item B<diam>
 
-Return the apparent RA and Dec (in radians) for the current
-coordinates and time.
+Returns the apparent angular planet diameter from the most recent calculation
+of the apparent RA/Dec.
+
+ $diam = $c->diam();
+
+Returns the answer as a C<Astro::Coords::Angle> object. Note that this
+number is not updated automatically. (so don't change the time and expect
+to get the correct answer without first asking for a ra/dec calculation).
 
 =cut
 
-sub _apparent {
+sub diam {
+  my $self = shift;
+  if (@_) {
+    my $d = shift;
+    $self->{diam} = new Astro::Coords::Angle( $d, units => 'rad' );
+  }
+  return $self->{diam};
+}
+
+=item B<apparent>
+
+Return the apparent RA and Dec as two C<Astro::Coords::Angle> objects for the current
+coordinates and time.
+
+ ($ra_app, $dec_app) = $self->apparent();
+
+=cut
+
+sub apparent {
   my $self = shift;
   my $tel = $self->telescope;
   my $long = (defined $tel ? $tel->long : 0.0 );
   my $lat = (defined $tel ? $tel->lat : 0.0 );
 
   Astro::SLA::slaRdplan($self->_mjd_tt, $PLANET{$self->planet},
-			$long, $lat, my $ra, my $dec, my $diam);
-  return($ra, $dec);
+			$long, $lat, my $ra_app, my $dec_app, my $diam);
+
+  # Store the diameter
+  $self->diam( $diam );
+
+  return (new Astro::Coords::Angle::Hour($ra_app, units => 'rad', range => '2PI'),
+	  new Astro::Coords::Angle($dec_app, units => 'rad'));
+}
+
+=item B<rv>
+
+Radial velocity of the planet relative to the Earth geocentre.
+
+=cut
+
+sub rv {
+  croak "Not yet implemented planetary radial velocities";
+}
+
+=item B<vdefn>
+
+Velocity definition. Always 'RADIO'.
+
+=cut
+
+sub vdefn {
+  return 'RADIO';
+}
+
+=item B<vframe>
+
+Velocity reference frame. Always 'GEO'.
+
+=cut
+
+sub vframe {
+  return 'GEO';
 }
 
 =back
+
+=begin __PRIVATE_METHODS__
+
+=over 4
+
+=item B<_default_horizon>
+
+Internal helper method for C<rise_time> and C<set_time>. Returns the
+default horizon. For the sun returns Astro::Coords::SUN_RISE_SET.  For
+the Moon returns:
+
+  -(  0.5666 deg + moon radius + moon's horizontal parallax )
+
+       34 arcmin    15-17 arcmin    55-61 arcmin           =  4 - 12 arcmin
+
+[see the USNO pages at: http://aa.usno.navy.mil/faq/docs/RST_defs.html]
+
+For all other planets returns 0.
+
+Note that the moon calculation requires that the date stored in the object
+is close to the date for which the rise/set time is required.
+
+The USNO web page is quite confusing on the definition for the moon since
+in one place it implies that the moonrise occurs when the centre of the moon
+is above the horizon by 5-10 arcminutes (the above calculation) but on the
+moon data page comparing moonrise with tables for a specific day indicates a
+moonrise of -48 arcminutes.
+
+=cut
+
+sub _default_horizon {
+  my $self = shift;
+  my $name = lc($self->name);
+
+  if ($name eq 'sun') {
+    return &Astro::Coords::SUN_RISE_SET;
+  } elsif ($name eq 'moon') {
+    return (-0.8 * Astro::SLA::DD2R);
+    # See http://aa.usno.navy.mil/faq/docs/RST_defs.html
+    my $refterm = 0.5666 * Astro::SLA::DD2R; # atmospheric refraction
+
+    # Get the moon radius
+    $self->_apparent();
+    my $radius = $self->diam() / 2;
+
+    # parallax - assume 57 arcminutes for now
+    my $parallax = (57 * 60) * Astro::SLA::DAS2R;
+
+    print "Refraction: $refterm  Radius: $radius  Parallax: $parallax\n";
+
+    return ( -1 * ( $refterm + $radius - $parallax ) );
+  } else {
+    return 0;
+  }
+}
+
+=back
+
+=end __PRIVATE_METHODS__
 
 =head1 NOTES
 
@@ -192,13 +314,25 @@ C<Astro::SLA> is used for all internal astrometric calculations.
 
 =head1 AUTHOR
 
-Tim Jenness E<lt>t.jenness@jach.hawaii.eduE<gt>
+Tim Jenness E<lt>t.jenness@cpan.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright (C) 2001-2002 Particle Physics and Astronomy Research Council.
-All Rights Reserved. This program is free software; you can
-redistribute it and/or modify it under the same terms as Perl itself.
+Copyright (C) 2001-2005 Particle Physics and Astronomy Research Council.
+All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful,but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc., 59 Temple
+Place,Suite 330, Boston, MA  02111-1307, USA
 
 =cut
 

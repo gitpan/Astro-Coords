@@ -21,10 +21,11 @@ use strict;
 use warnings;
 use Carp;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 # Need working slaPlante
 use Astro::SLA 0.95 ();
+use Astro::Coords::Angle;
 use Time::Piece qw/ :override /;
 
 use base qw/ Astro::Coords /;
@@ -91,7 +92,7 @@ really close to each other.
 
 In order to better match normal usage, EPOCH can also be specified
 as a string of the form 'YYYY mmm D.frac' (e.g. '1997 Apr 1.567').
-(no decimal place after the month).
+(no decimal place after the month). This is the format used by JPL.
 
 =cut
 
@@ -262,17 +263,17 @@ sub summary {
   return sprintf("%-16s  %-12s  %-11s ELEMENTS",$name,'','');
 }
 
-=item B<_apparent>
+=item B<apparent>
 
-Return the apparent RA and Dec (in radians) for the current
-coordinates and time. Includes perterbation corrections to convert
-the elements to the required epoch.
+Return the apparent RA and Dec (as two C<Astro::Coords::Angle>
+objects) for the current coordinates and time. Includes perterbation
+corrections to convert the elements to the required epoch.
 
 Returns empty list on error.
 
 =cut
 
-sub _apparent {
+sub apparent {
   my $self = shift;
   my $tel = $self->telescope;
   my $long = (defined $tel ? $tel->long : 0.0 );
@@ -304,7 +305,6 @@ sub _apparent {
 
   # First have to perturb the elements to the current epoch
   # if we have a minor planet or comet
-  if (1) {
   if ( $jform == 2 || $jform == 3) {
     # for now we do not have enough information for jform=3
     # so just assume the EPOCH is the same
@@ -320,7 +320,7 @@ sub _apparent {
     #print "After perturbing: " .Dumper(\%el);
     croak "Error perturbing elements [status=$jstat]" if $jstat != 0;
   }
-}
+
 
   # Print out the values
   #print "EPOCH:  $el{EPOCH}\n";
@@ -342,7 +342,38 @@ sub _apparent {
 		     0.0,0.0,0.0,
 		     0.0,0.0,0.0,0.0,0.0,$ra, $dec);
 
-  return($ra, $dec);
+  return(new Astro::Coords::Angle::Hour($ra, units => 'rad', range => '2PI'),
+	 new Astro::Coords::Angle($dec, units => 'rad'));
+}
+
+=item B<rv>
+
+Radial velocity of the planet relative to the Earth geocentre.
+
+=cut
+
+sub rv {
+  croak "Not yet implemented element radial velocities";
+}
+
+=item B<vdefn>
+
+Velocity definition. Always 'RADIO'.
+
+=cut
+
+sub vdefn {
+  return 'RADIO';
+}
+
+=item B<vframe>
+
+Velocity reference frame. Always 'GEO'.
+
+=cut
+
+sub vframe {
+  return 'GEO';
 }
 
 =back
@@ -362,13 +393,25 @@ C<Astro::SLA> is used for all internal astrometric calculations.
 
 =head1 AUTHOR
 
-Tim Jenness E<lt>t.jenness@jach.hawaii.eduE<gt>
+Tim Jenness E<lt>tjenness@cpan.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright (C) 2001-2002 Particle Physics and Astronomy Research Council.
-All Rights Reserved. This program is free software; you can
-redistribute it and/or modify it under the same terms as Perl itself.
+Copyright (C) 2001-2005 Particle Physics and Astronomy Research Council.
+All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful,but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc., 59 Temple
+Place,Suite 330, Boston, MA  02111-1307, USA
 
 =cut
 

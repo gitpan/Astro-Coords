@@ -7,11 +7,13 @@ my $file = File::Spec->catfile(File::Spec->curdir, "lib", "Astro",
 
 WriteMakefile( 
                'NAME'           => 'Astro::Coords',
-	       'VERSION'        => '0.05',
+	       'VERSION'        => '0.10',
                'PREREQ_PM'      => { 
+                                    Scalar::Util => 1.13,
 				    Astro::SLA => '0.95',
 				    Time::Piece => '1.02',
 				    Astro::Telescope => '0.50',
+                                    DateTime => '0',
 				    Test::More => '0',
 				   },
 	       'dist'           => { COMPRESS => "gzip -9f"},
