@@ -8,7 +8,8 @@ Astro::Coords - Class for handling astronomical coordinates
 
   use Astro::Coords;
 
-  $c = new Astro::Coords( ra   => '05:22:56',
+  $c = new Astro::Coords( name => "My target",
+                          ra   => '05:22:56',
                           dec  => '-26:20:40.4',
                           type => 'B1950'
                           units=> 'sexagesimal');
@@ -57,7 +58,7 @@ Astro::Coords - Class for handling astronomical coordinates
   $obs = 1 if $c->isObservable;
 
   # Calculate distance to another coordinate (in radians)
-  $distance = $c->distance( $c2 ); # not yet supported
+  $distance = $c->distance( $c2 );
 
 
 =head1 DESCRIPTION
@@ -73,18 +74,32 @@ time must be provided.
 use 5.006;
 use strict;
 use warnings;
+use warnings::register;
 use Carp;
 
-our $VERSION = '0.03';
+our $VERSION = '0.05';
 
+use Math::Trig qw/ acos /;
 use Astro::SLA ();
 use Astro::Coords::Equatorial;
 use Astro::Coords::Elements;
 use Astro::Coords::Planet;
+use Astro::Coords::Interpolated;
 use Astro::Coords::Fixed;
 use Astro::Coords::Calibration;
 
-use Time::Piece  '1.00'; # override gmtime
+use Time::Piece  qw/ :override /, '1.00'; # override gmtime
+
+# Constants for Sun rise/set and twilight definitions
+# Elevation in radians
+# See http://aa.usno.navy.mil/faq/docs/RST_defs.html
+use constant SUN_RISE_SET => ( - (50 * 60) * Astro::SLA::DAS2R); # 50 arcmin
+use constant CIVIL_TWILIGHT => ( - (6 * 3600) * Astro::SLA::DAS2R); # 6 deg
+use constant NAUT_TWILIGHT => ( - (12 * 3600) * Astro::SLA::DAS2R); # 12 deg
+use constant AST_TWILIGHT => ( - (18 * 3600) * Astro::SLA::DAS2R); # 18 deg
+
+# This is a fudge. Not accurate
+use constant MOON_RISE_SET => ( 5 * 60 * Astro::SLA::DAS2R);
 
 =head1 METHODS
 
@@ -177,13 +192,20 @@ sub new {
 
     # For elements we must not only check for the elements key
     # but also make sure that that key points to a hash containing
-    # at least the EPOCH key
+    # at least the EPOCH or EPOCHPERIH key
     if (exists $args{elements} and defined $args{elements}
-       and UNIVERSAL::isa($args{elements},"HASH") 
-       and exists $args{elements}{EPOCH}
-       and defined $args{elements}{EPOCH}) {
+       && UNIVERSAL::isa($args{elements},"HASH") 
+       &&  (exists $args{elements}{EPOCH}
+       and defined $args{elements}{EPOCH})
+       ||  (exists $args{elements}{EPOCHPERIH}
+       and defined $args{elements}{EPOCHPERIH})
+     ) {
 
-      $obj = new Astro::Coords::Elements( elements => $args{elements} );
+      $obj = new Astro::Coords::Elements( %args );
+
+    } elsif (exists $args{mjd1}) {
+
+      $obj = new Astro::Coords::Interpolated( %args );
 
     } elsif (exists $args{type} and defined $args{type}) {
 
@@ -214,6 +236,19 @@ sub new {
 
 =over 4
 
+=item B<name>
+
+Name of the target associated with the coordinates.
+
+=cut
+
+sub name {
+  my $self = shift;
+  if (@_) {
+    $self->{name} = shift;
+  }
+  return $self->{name};
+}
 
 =item B<telescope>
 
@@ -247,10 +282,14 @@ Date/Time object to use when determining the source elevation.
 
 Argument must be of type C<Time::Piece> (or C<Time::Object> version
 1.00). The method dies if this is not the case [it must support an
-C<mjd> method].
+C<mjd> method]. A value of C<undef> is supported. This will clear
+the time and force the current time to be used on subsequent calls.
 
-If no argument is specified an object referring to the current time
-(GMT/UT) is returned.
+  $c->datetime( undef );
+
+If no argument is specified, or C<usenow> is set to true, an object
+referring to the current time (GMT/UT) is returned. If a new argument
+is supplied C<usenow> is always set to false.
 
 =cut
 
@@ -258,12 +297,78 @@ sub datetime {
   my $self = shift;
   if (@_) {
     my $time = shift;
+
+    # undef is okay
     croak "datetime: Argument does not have an mjd() method [class="
       . ( ref($time) ? ref($time) : $time) ."]"
-      unless (UNIVERSAL::can($time, "mjd"));
+      if (defined $time && !UNIVERSAL::can($time, "mjd"));
     $self->{DateTime} = $time;
+    $self->usenow(0);
   }
-  return (defined $self->{DateTime} ? $self->{DateTime} : gmtime );
+  if (defined $self->{DateTime} && ! $self->usenow) {
+    return $self->{DateTime};
+  } else {
+    return gmtime;
+  }
+}
+
+=item B<has_datetime>
+
+Returns true if a specific time is stored in the object, returns
+false if no time is stored. (The value of C<usenow> is
+ignored).
+
+This is required because C<datetime> always returns a time.
+
+=cut
+
+sub has_datetime {
+  my $self = shift;
+  return (defined $self->{DateTime});
+}
+
+=item B<usenow>
+
+Flag to indicate whether the current time should be used for calculations
+regardless of whether an explicit time object is stored in C<datetime>.
+This is useful when trying to determine the current position of a target
+without affecting previous settings.
+
+  $c->usenow( 1 );
+  $usenow = $c->usenow;
+
+Defaults to false.
+
+=cut
+
+sub usenow {
+  my $self = shift;
+  if (@_) {
+    $self->{UseNow} = shift;
+  }
+  return $self->{UseNow};
+}
+
+=item B<comment>
+
+A textual comment associated with the coordinate (optional).
+Defaults to the empty string.
+
+  $comment = $c->comment;
+  $c->comment("An inaccurate coordinate");
+
+Always returns an empty string if undefined.
+
+=cut
+
+sub comment {
+  my $self = shift;
+  if (@_) {
+    $self->{Comment} = shift;
+  }
+  my $com = $self->{Comment};
+  $com = '' unless defined $com;
+  return $com;
 }
 
 =back
@@ -275,7 +380,7 @@ sub datetime {
 =item B<ra_app>
 
 Apparent RA for the current time. Arguments are similar to those
-specified for "dec".
+specified for "dec_app".
 
   $ra_app = $c->ra_app( format => "s" );
 
@@ -391,7 +496,45 @@ sub airmass {
   return Astro::SLA::slaAirmas( $zd );
 }
 
+=item B<ra>
 
+Return the J2000 Right ascension for the target. Unless overridden
+by a subclass this converts the apparrent RA/Dec to J2000.
+
+  $ra2000 = $c->ra( format => "s" );
+
+=cut
+
+sub ra {
+  my $self = shift;
+  my %opt = @_;
+  $opt{format} = "radians" unless defined $opt{format};
+  my ($ra_app, $dec_app) = $self->_apparent;
+  my $mjd = $self->_mjd_tt;
+  Astro::SLA::slaAmp($ra_app, $dec_app, $mjd, 2000.0, my $rm, my $dm);
+  # Convert to hours if we are using a string or hour format
+  $rm = $self->_cvt_tohrs( \$opt{format}, $rm);
+  return $self->_cvt_fromrad( $rm, $opt{format});
+}
+
+=item B<dec>
+
+Return the J2000 declination for the target. Unless overridden
+by a subclass this converts the apparrent RA/Dec to J2000.
+
+  $dec2000 = $c->dec( format => "s" );
+
+=cut
+
+sub dec {
+  my $self = shift;
+  my %opt = @_;
+  $opt{format} = "radians" unless defined $opt{format};
+  my ($ra_app, $dec_app) = $self->_apparent;
+  my $mjd = $self->_mjd_tt;
+  Astro::SLA::slaAmp($ra_app, $dec_app, $mjd, 2000.0, my $rm, my $dm);
+  return $self->_cvt_fromrad( $dm, $opt{format});
+}
 
 =item B<pa>
 
@@ -414,6 +557,7 @@ sub pa {
   my $lat = ( defined $tel ? $tel->lat : 0.0);
   return $self->_cvt_fromrad(Astro::SLA::slaPa($ha, $dec, $lat), $opt{format});
 }
+
 
 =item B<isObservable>
 
@@ -498,6 +642,42 @@ sub array {
   croak "The method array() must be subclassed\n";
 }
 
+=item B<distance>
+
+Calculate the distance (on the tangent plane) between the current
+coordinate and a supplied coordinate.
+
+  $dist = $c->distance( $c2 );
+  @dist = $c->distance( $c2 );
+
+The distance is returned in radians (but should be some form of angular
+object as should all of the RA and dec coordinates). In list context returns
+the individual "x" and "y" offsets (in radians). In scalar context returns the
+distance.
+
+Returns undef if there was an error during the calculation (e.g. because
+the new coordinate was too far away).
+
+=cut
+
+sub distance {
+  my $self = shift;
+  my $offset = shift;
+
+  Astro::SLA::slaDs2tp($offset->ra_app, $offset->dec_app,
+		       $self->ra_app, $self->dec_app,
+		       my $xi, my $eta, my $j);
+
+  return () unless $j == 0;
+
+  if (wantarray) {
+    return ($xi, $eta);
+  } else {
+    return ($xi**2 + $eta**2)**0.5;
+  }
+}
+
+
 =item B<status>
 
 Return a status string describing the current coordinates.
@@ -513,16 +693,43 @@ sub status {
   my $self = shift;
   my $string;
 
+  $string .= "Target name:    " . $self->name . "\n"
+    if $self->name;
+
   $string .= "Coordinate type:" . $self->type ."\n";
 
-  $string .= "Elevation:      " . $self->el(format=>'d')." deg\n";
-  $string .= "Azimuth  :      " . $self->az(format=>'d')." deg\n";
-  my $ha = Astro::SLA::slaDrange( $self->ha ) * Astro::SLA::DR2H;
-  $string .= "Hour angle:     " . $ha ." hrs\n";
-  $string .= "Apparent dec:   " . $self->dec_app(format=>'d')." deg\n";
+  if ($self->type ne 'CAL') {
+
+    $string .= "Elevation:      " . $self->el(format=>'d')." deg\n";
+    $string .= "Azimuth  :      " . $self->az(format=>'d')." deg\n";
+    my $ha = Astro::SLA::slaDrange( $self->ha ) * Astro::SLA::DR2H;
+    $string .= "Hour angle:     " . $ha ." hrs\n";
+    $string .= "Apparent RA :   " . $self->ra_app(format=>'s')."\n";
+    $string .= "Apparent dec:   " . $self->dec_app(format=>'s')."\n";
+
+    # Transit time
+    $string .= "Time of transit:" . $self->meridian_time ."\n";
+    $string .= "Transit El:     " . $self->transit_el(format=>'d')." deg\n";
+    my $ha_set = $self->ha_set( format => 'hour');
+    $string .= "Hour Ang. (set):" . (defined $ha_set ? $ha_set : '??')." hrs\n";
+
+    my $t = $self->rise_time;
+    $string .= "Rise time:      " . $t . "\n" if defined $t;
+    $t = $self->set_time;
+    $string .= "Set time:       " . $t . "\n" if defined $t;
+
+    # This check was here before we added a RA/Dec to the
+    # base class.
+    if ($self->can('ra')) {
+      $string .= "RA (J2000):     " . $self->ra(format=>'s')."\n";
+      $string .= "Dec(J2000):     " . $self->dec(format=>'s')."\n";
+    }
+  }
 
   if (defined $self->telescope) {
-    $string .= "Telescope:      " . $self->telescope->fullname . "\n";
+    my $name = (defined $self->telescope->fullname ?
+		$self->telescope->fullname : $self->telescope->name );
+    $string .= "Telescope:      $name\n";
     if ($self->isObservable) {
       $string .= "The target is currently observable\n";
     } else {
@@ -531,10 +738,343 @@ sub status {
   }
 
   $string .= "For time ". $self->datetime ."\n";
+  my $fmt = 's';
+  $string .= "LST: ". $self->_cvt_fromrad($self->_cvt_tohrs(\$fmt,$self->_lst),$fmt) ."\n";
 
   return $string;
 }
 
+=item B<calculate>
+
+Calculate target positions for a range of times.
+
+  @data = $c->calculate( start => $start,
+			 end => $end,
+			 inc => $increment,
+		         units => 'deg'
+		       );
+
+The start and end times are Time::Piece objects and the increment is a
+Time::Seconds object or an integer. If the end time will not
+necessarily be used explictly if the increment does not divide into
+the total time gap exactly. None of the returned times will exceed the
+end time. The increment must be greater than zero but the start and end
+times can be identical.
+
+Returns an array of hashes. Each hash contains 
+
+  time [Time::Piece object]
+  elevation
+  azimuth
+  parang
+  lst [always in radians]
+
+The angles are in the units specified (radians, degrees or sexagesimal).
+
+=cut
+
+sub calculate {
+  my $self = shift;
+
+  my %opts = @_;
+
+  croak "No start time specified" unless exists $opts{start};
+  croak "No end time specified" unless exists $opts{end};
+  croak "No time increment specified" unless exists $opts{inc};
+
+  # Get the increment as an integer
+  my $inc = $opts{inc};
+  if (UNIVERSAL::isa($inc, "Time::Seconds")) {
+    $inc = $inc->seconds;
+  }
+  croak "Increment must be greater than zero" unless $inc > 0;
+
+  $opts{units} = 'rad' unless exists $opts{units};
+
+  my @data;
+  my $current = gmtime( $opts{start}->epoch );
+
+  while ( $current->epoch <= $opts{end}->epoch ) {
+
+    # Hash for storing the data
+    my %timestep;
+
+    # store the time
+    $timestep{time} = gmtime( $current->epoch );
+
+    # Set the time in the object
+    # [standard problem with knowing whether we are overriding
+    # another setting]
+    $self->datetime( $current );
+
+    # Now calculate the positions
+    $timestep{elevation} = $self->el( format => $opts{units} );
+    $timestep{azimuth} = $self->az( format => $opts{units} );
+    $timestep{parang} = $self->pa( format => $opts{units} );
+    $timestep{lst}    = $self->_lst();
+
+    # store the timestep
+    push(@data, \%timestep);
+
+    # increment the time
+    $current += $inc;
+
+  }
+
+  return @data;
+
+}
+
+=item B<rise_time>
+
+Next time the target will appear above the horizon (starting from the
+time stored in C<datetime>). Returns undef if the target is already
+up. An optional argument can be given (as a hash with key "horizon")
+specifying a different elevation to the horizon (in radians).
+
+  $t = $c->rise_time();
+  $t = $c->rise_time( horizon => $el );
+
+Returns a C<Time::Piece> object.
+
+BUG: Does not distinguish a source that never rises from a source
+that never sets.
+
+=cut
+
+sub rise_time {
+  my $self = shift;
+
+  # Calculate the HA required for setting
+  my $ha_set = $self->ha_set( @_, format => 'radians' );
+  return if ! defined $ha_set;
+
+  # and convert to seconds
+  $ha_set *= Astro::SLA::DR2S;
+
+  # Calculate the transit time
+  my $mt = $self->meridian_time;
+
+  my $rise = $mt - $ha_set;
+
+  # If the rise time has already happened return undef
+  if ($rise - $self->datetime > 0) {
+    return $rise;
+  } else {
+    return;
+  }
+
+}
+
+=item B<set_time>
+
+Time at which the target will set below the horizon.  (starting from
+the time stored in C<datetime>). Returns C<undef> if the target is
+already down. An optional argument can be given specifying a different
+elevation to the horizon (in radians).
+
+  $t = $c->set_time();
+  $t = $c->set_time( horizon => $el );
+
+Returns a C<Time::Piece> object.
+
+BUG: Does not distinguish a source that never rises from a source
+that never sets.
+
+=cut
+
+sub set_time {
+  my $self = shift;
+
+  # Calculate the HA required for setting
+  my $ha_set = $self->ha_set( @_, format=> 'radians' );
+  return if ! defined $ha_set;
+
+  # and convert to seconds
+  $ha_set *= Astro::SLA::DR2S;
+
+  # Calculate the transit time
+  my $mt = $self->meridian_time;
+
+  my $set = $mt + $ha_set;
+
+#  print "MT: $mt  HA Set: $ha_set and Set time $set\n";
+
+  # If the rise time has already happened return undef
+  if ($set - $self->datetime > 0) {
+    return $set;
+  } else {
+    return;
+  }
+
+}
+
+=item B<ha_set>
+
+Hour angle at which the target will set. Negate this value to obtain
+the rise time. By default assumes the target sets at an elevation of 0
+degrees. An optional hash can be given with key of "horizon"
+specifying a different elevation (in radians).
+
+  $ha = $c->ha_set;
+  $ha = $c->ha_set( horizon => $el );
+
+Returned in radians, unless overridden with the "format" key.
+(See the C<ha> method for alternatives).
+
+  $ha = $c->ha_set( horizon => $el, format => 'h');
+
+There are predefined elevations for events such as 
+Sun rise/set and Twilight (only relevant if your object
+refers to the Sun). See L<"Constants"> for more information.
+
+Returns C<undef> if the target never reaches the specified horizon.
+(maybe it is circumpolar).
+
+=cut
+
+sub ha_set {
+  my $self = shift;
+
+  # Get the reference horizon elevation
+  my %opt = @_;
+
+  $opt{horizon} = 0 unless defined $opt{horizon};
+  $opt{format}  = 'radians' unless defined $opt{format};
+
+  # Get the telescope position
+  my $tel = $self->telescope;
+
+  # Get the longitude (in radians)
+  my $lat = (defined $tel ? $tel->lat : 0.0 );
+
+  # Declination
+  my $dec = $self->dec_app;
+
+  # Calculate the hour angle for this elevation
+  # See http://www.faqs.org/faqs/astronomy/faq/part3/section-5.html
+  my $cos_ha0 = ( sin($opt{horizon}) - sin($lat)*sin( $dec ) ) /
+    ( cos($lat) * cos($dec) );
+
+  # Make sure we have a valid number for the cosine
+  return undef if abs($cos_ha0) > 1;
+
+  # Work out the hour angle for this elevation
+  my $ha0 = acos( $cos_ha0 );
+
+  # If we are the Sun we need to convert this to solar time
+  # time from sidereal time
+  $ha0 *= 365.2422/366.2422
+    unless (lc($self->name) eq 'sun' && $self->isa("Astro::Coords::Planet"));
+
+
+#  print "HA 0 is $ha0\n";
+#  print "#### in hours: ". ( $ha0 * Astro::SLA::DR2S / 3600)."\n";
+
+  # return the result (converting if necessary)
+  $ha0 = $self->_cvt_tohrs( \$opt{format}, $ha0);
+  return $self->_cvt_fromrad( $ha0, $opt{format});
+}
+
+=item B<meridian_time>
+
+Calculate the meridian time for this target (the time at which
+the source transits).
+
+  MT(UT) = RA - LST(UT=0)
+
+The next transit following the current time is calculated and
+returned as a C<Time::Piece> object.
+
+=cut
+
+sub meridian_time {
+  my $self = shift;
+
+  # Get the current time (do not modify it since we need to put it back)
+  my $time = $self->datetime;
+
+  # Determine whether we have to remember the cache
+  my $havetime = $self->has_datetime;
+
+  # Add on 24 hours to go to the next day (so we can drop
+  # H:M:S)
+  my $next = $time + Time::Seconds::ONE_DAY;
+
+  # Need to clear the HMS part so we have midnight
+  $next = $next - ( $next->hour * Time::Seconds::ONE_HOUR +
+		    $next->min * Time::Seconds::ONE_MINUTE +
+		    $next->sec );
+
+  # Store the new time
+  $self->datetime( $next );
+
+#  print "# Next is $next\n";
+
+  # Now calculate the offset from the RA of the source.
+  # Note that RA should be apparent RA and so the time should
+  # match the actual time stored in the object.
+  my $offset = $self->ra_app - $self->_lst;
+
+  # This is in radians. Need to convert it to seconds
+  my $offset_sec = $offset * Astro::SLA::DR2S;
+
+#  print "# Offset is $offset_sec seconds\n";
+
+  # If we are not the Sun we need to convert this to sidereal
+  # time from solar time
+  $offset_sec *= 365.2422/366.2422
+    unless (lc($self->name) eq 'sun' && $self->isa("Astro::Coords::Planet"));
+
+  # Generate a new Time::Piece
+  my $mtime = $next + $offset_sec;
+
+  # Reset the clock
+  if ($havetime) {
+    $self->datetime( $time );
+  } else {
+    $self->datetime( undef );
+  }
+
+  # return the time
+  return $mtime;
+}
+
+=item B<transit_el>
+
+Elevation at transit. This is just the elevation at Hour Angle = 0.0.
+(ie at C<meridian_time>).
+
+Format is supported as for the C<el> method.
+
+  $el = $c->transit_el( format => 'deg' );
+
+=cut
+
+sub transit_el {
+  my $self = shift;
+
+  # Get meridian time
+  my $mtime = $self->meridian_time();
+
+  # Cache the current time if required
+  # Note that we can leave $cache as undef if there is no
+  # real time.
+  my $cache;
+  $cache = $self->datetime if $self->has_datetime;
+
+  # set the new time
+  $self->datetime( $mtime );
+
+  # calculate the elevation
+  my $el = $self->el( @_ );
+
+  # fix the time back to what it was (including an undef value
+  # if we did not read the cache).
+  $self->datetime( $cache );
+
+  return $el;
+}
 
 =item B<_lst>
 
@@ -608,7 +1148,7 @@ sub _cvt_tohrs {
   my $self = shift;
   my ($fmt, $rad) = @_;
   # Convert to hours if we are using a string or hour format
-  $rad /= 15.0 if $$fmt =~ /^[ash]/;
+  $rad /= 15.0 if defined $rad && $$fmt =~ /^[ash]/;
   # and reset format to use degrees
   $$fmt = "degrees" if $$fmt =~ /^h/;
   return $rad;
@@ -630,6 +1170,8 @@ prior to calling this routine.
 
   $out = $c->_cvt_fromrad( $rad, $format );
 
+If the input value is undefined the return value will be undefined.
+
 =cut
 
 sub _cvt_fromrad {
@@ -637,23 +1179,25 @@ sub _cvt_fromrad {
   my $in = shift;
   my $format = shift;
   $format = '' unless defined $format;
+  return $in unless defined $in;
 
   if ($format =~ /^d/) {
     $in *= Astro::SLA::DR2D;
   } elsif ($format =~ /^[as]/) {
     my @dmsf;
-    Astro::SLA::slaDr2af(2, $in, my $sign, @dmsf);
+    my $res = 2;
+    Astro::SLA::slaDr2af($res, $in, my $sign, @dmsf);
     if ($format =~ /^a/) {
       # Store the sign
       unshift(@dmsf, $sign);
-      # Combine the fraction
+      # Combine the fraction [assuming fixed precision]
       my $frac = pop(@dmsf);
-      $dmsf[-1] .= ".$frac";
+      $dmsf[-1] .= sprintf( ".%0$res"."d",$frac);
       # Store the reference
       $in = \@dmsf;
     } else {
-      $sign = '' if $sign eq "+";
-      $in = $sign . join(":",@dmsf[0..2]) . ".$dmsf[3]";
+      $sign = ' ' if $sign eq "+";
+      $in = $sign . sprintf("%02d:%02d:%02d.%0$res"."d",@dmsf);
     }
   }
 
@@ -680,7 +1224,8 @@ other values.
 
 An optional final argument can be used to indicate that the supplied
 string is in hours rather than degrees. This is only used when
-units is set to "sexagesimal".
+units is set to "sexagesimal". Warnings are issued if the
+string can not be parsed or the values are out of range.
 
 Returns undef on error.
 
@@ -715,7 +1260,7 @@ sub _cvt_torad {
   }
 
   # Now process the input - starting with strings
-  my $output;
+  my $output = 0;
   if ($units =~ /^s/) {
 
     # Need to clean up the string for slalib
@@ -725,8 +1270,18 @@ sub _cvt_torad {
     Astro::SLA::slaDafin( $input, $nstrt, $output, my $j);
     $output = undef unless $j == 0;
 
+    if ($j == -1) {
+      warnings::warnif "In coordinate '$input' the degrees do not look right";
+    } elsif ($j == -2) {
+      warnings::warnif "In coordinate '$input' the minutes field is out of range";
+    } elsif ($j == -3) {
+      warnings::warnif "In coordinate '$input' the seconds field is out of range (0-59.9)";
+    } elsif ($j == 1) {
+      warnings::warnif "Unable to find plausible coordinate in string '$input'";
+    }
+
     # If we were in hours we need to multiply by 15
-    $output *= 15.0 if $hms;
+    $output *= 15.0 if (defined $output && $hms);
 
   } elsif ($units =~ /^h/) {
     # Hours in decimal
@@ -744,7 +1299,41 @@ sub _cvt_torad {
   return $output;
 }
 
+=item B<_mjd_tt>
+
+Retrieve the MJD in TT (Terrestrial time) rather than UTC time.
+
+=cut
+
+sub _mjd_tt {
+  my $self = shift;
+  my $mjd = $self->datetime->mjd;
+  my $offset = Astro::SLA::slaDtt( $mjd );
+  $mjd += ($offset / (86_400));
+  return $mjd;
+}
+
 =back
+
+=head1 CONSTANTS
+
+In some cases when calculating events such as sunrise, sunset or
+twilight time it is useful to have predefined constants containing
+the standard elevations. These are available in the C<Astro::Coords>
+namespace as:
+
+  SUN_RISE_SET: Position of Sun for sunrise or sunset (-50 arcminutes)
+  CIVIL_TWILIGHT: Civil twilight (-6 degrees)
+  NAUT_TWILIGHT: Nautical twilight (-12 degrees)
+  AST_TWILIGHT: Astronomical twilight (-18 degrees)
+
+For example:
+
+  $set = $c->set_time( horizon => Astro::Coords::AST_TWILIGHT );
+
+These are usually only relevant for the Sun. Note that refraction
+effects may affect the actual answer and these are simply average
+definitions.
 
 =head1 REQUIREMENTS
 
@@ -752,11 +1341,11 @@ C<Astro::SLA> is used for all internal astrometric calculations.
 
 =head1 AUTHOR
 
-Tim Jenness E<lt>t.jenness@jach.hawaii.eduE<gt>
+Tim Jenness E<lt>tjenness@cpan.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright (C) 2001-2002 Particle Physics and Astronomy Research Council.
+Copyright (C) 2001-2003 Particle Physics and Astronomy Research Council.
 All Rights Reserved. This program is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 

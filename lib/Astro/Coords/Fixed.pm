@@ -35,7 +35,7 @@ use 5.006;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use Astro::SLA ();
 use base qw/ Astro::Coords /;
@@ -65,6 +65,8 @@ Azimuth and Elevation is the internal format. Currently there is no
 caching (so there is always overhead converting to apparent 
 RA and Dec) since there is no cache flushing when the telescope
 is changed.
+
+In principal a name can be associated with this position.
 
 =cut
 
@@ -105,6 +107,9 @@ sub new {
   } else {
     return undef;
   }
+
+  # Store the name
+  $c->name( $args{name} ) if exists $args{name};
 
   # Store it in the object
   $c->_azel( $az, $el );
@@ -175,6 +180,24 @@ sub stringify {
   return "$az $el";
 }
 
+=item B<summary>
+
+Return a one line summary of the coordinates.
+In the future will accept arguments to control output.
+
+  $summary = $c->summary();
+
+=cut
+
+sub summary {
+  my $self = shift;
+  my $name = $self->name;
+  $name = '' unless defined $name;
+  return sprintf("%-16s  %-12s  %-13s   AZEL",$name,
+		 $self->az(format=>"s"),
+		 $self->el(format =>"s"));
+}
+
 =item B<array>
 
 Array summarizing the object. Retuns 
@@ -217,7 +240,8 @@ sub ha {
 
 Return the apparent RA and Dec (in radians)
 for the current time [note that the apparent declination
-is fixed and the apparent RA changes].
+is fixed and the apparent RA changes]. The RA is put into
+the standard range.
 
 If no telescope is present the equator is used.
 
@@ -228,6 +252,9 @@ sub _apparent {
 
   my ($ha, $dec_app) = $self->_hadec;
   my $ra_app = $self->_lst - $ha;
+
+  # Wrap back to 2 PI radians
+  $ra_app = Astro::SLA::slaDranrm( $ra_app );
 
   return( $ra_app, $dec_app);
 }
@@ -266,11 +293,11 @@ C<Astro::SLA> is used for all internal astrometric calculations.
 
 =head1 AUTHOR
 
-Tim Jenness E<lt>t.jenness@jach.hawaii.eduE<gt>
+Tim Jenness E<lt>tjenness@cpan.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright (C) 2001-2002 Particle Physics and Astronomy Research Council.
+Copyright (C) 2001-2003 Particle Physics and Astronomy Research Council.
 All Rights Reserved. This program is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 

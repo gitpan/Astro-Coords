@@ -6,7 +6,8 @@ Astro::Coords::Equatorial - Manipulate equatorial coordinates
 
 =head1 SYNOPSIS
 
-  $c = new Astro::Coords::Equatorial( ra   => '05:22:56',
+  $c = new Astro::Coords::Equatorial( name => 'blah',
+				      ra   => '05:22:56',
 				      dec  => '-26:20:40.4',
 				      type => 'B1950'
 				      units=> 'sexagesimal');
@@ -23,7 +24,7 @@ use 5.006;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use Astro::SLA ();
 use base qw/ Astro::Coords /;
@@ -41,6 +42,7 @@ use overload '""' => "stringify";
 Instantiate a new object using the supplied options.
 
   $c = new Astro::Coords::Equatorial(
+			  name =>
                           ra =>
                           dec =>
 			  long =>
@@ -54,7 +56,8 @@ Lat are used for degdeg systems (eg where type=galactic). C<type> can
 be "galactic", "j2000", "b1950", and "supergalactic".  The C<units>
 can be specified as "sexagesimal" (when using colon or space-separated
 strings), "degrees" or "radians". The default is determined from
-context.
+context. The name is just a string you can associate with the sky
+position.
 
 All coordinates are converted to FK5 J2000.
 
@@ -92,6 +95,7 @@ sub new {
   my ($ra, $dec);
   if ($args{type} eq "J2000") {
     return undef unless exists $args{ra} and exists $args{dec};
+    return undef unless defined $args{ra} and defined $args{dec};
 
     # nothing to do except convert to radians
     $ra = $args{ra};
@@ -99,16 +103,19 @@ sub new {
 
   } elsif ($args{type} eq "B1950") {
     return undef unless exists $args{ra} and exists $args{dec};
+    return undef unless defined $args{ra} and defined $args{dec};
 
     Astro::SLA::slaFk45z( $args{ra}, $args{dec}, 1950.0, $ra, $dec);
 
   } elsif ($args{type} eq "GALACTIC") {
     return undef unless exists $args{long} and exists $args{lat};
+    return undef unless defined $args{long} and defined $args{lat};
 
     Astro::SLA::slaGaleq( $args{long}, $args{lat}, $ra, $dec);
 
   } elsif ($args{type} eq "SUPERGALACTIC") {
     return undef unless exists $args{long} and exists $args{lat};
+    return undef unless defined $args{long} and defined $args{lat};
 
     Astro::SLA::slaSupgal( $args{long}, $args{lat}, my $glong, my $glat);
     Astro::SLA::slaGaleq( $glong, $glat, $ra, $dec);
@@ -116,7 +123,7 @@ sub new {
   }
 
   # Now the actual object
-  bless { ra2000 => $ra, dec2000 => $dec }, $class;
+  bless { ra2000 => $ra, dec2000 => $dec, name => $args{name} }, $class;
 
 
 }
@@ -312,6 +319,25 @@ sub stringify {
   return $self->ra(format=>"s") . " " . $self->dec(format =>"s");
 }
 
+=item B<summary>
+
+Return a one line summary of the coordinates.
+In the future will accept arguments to control output.
+
+  $summary = $c->summary();
+
+=cut
+
+sub summary {
+  my $self = shift;
+  my $name = $self->name;
+  $name = '' unless defined $name;
+  return sprintf("%-16s  %-12s  %-13s  J2000",$name,
+		 $self->ra(format=>"s"),
+		 $self->dec(format =>"s"));
+}
+
+
 =back
 
 =head2 Private Methods
@@ -379,11 +405,11 @@ C<Astro::SLA> is used for all internal astrometric calculations.
 
 =head1 AUTHOR
 
-Tim Jenness E<lt>t.jenness@jach.hawaii.eduE<gt>
+Tim Jenness E<lt>tjenness@cpan.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright (C) 2001-2002 Particle Physics and Astronomy Research Council.
+Copyright (C) 2001-2003 Particle Physics and Astronomy Research Council.
 All Rights Reserved. This program is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 

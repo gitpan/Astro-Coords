@@ -20,7 +20,7 @@ use 5.006;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use Astro::SLA ();
 use base qw/ Astro::Coords /;
@@ -85,6 +85,17 @@ sub planet {
   return $self->{planet};
 }
 
+=item B<name>
+
+For planets, the name is always just the planet name.
+
+=cut
+
+sub name {
+  my $self = shift;
+  return $self->planet;
+}
+
 =back
 
 =head1 General Methods
@@ -135,6 +146,22 @@ sub stringify {
   return uc($self->planet());
 }
 
+=item B<summary>
+
+Return a one line summary of the coordinates.
+In the future will accept arguments to control output.
+
+  $summary = $c->summary();
+
+=cut
+
+sub summary {
+  my $self = shift;
+  my $name = $self->name;
+  $name = '' unless defined $name;
+  return sprintf("%-16s  %-12s  %-13s PLANET",$name,'','');
+}
+
 =item B<_apparent>
 
 Return the apparent RA and Dec (in radians) for the current
@@ -148,7 +175,7 @@ sub _apparent {
   my $long = (defined $tel ? $tel->long : 0.0 );
   my $lat = (defined $tel ? $tel->lat : 0.0 );
 
-  Astro::SLA::slaRdplan($self->datetime->mjd, $PLANET{$self->planet},
+  Astro::SLA::slaRdplan($self->_mjd_tt, $PLANET{$self->planet},
 			$long, $lat, my $ra, my $dec, my $diam);
   return($ra, $dec);
 }
