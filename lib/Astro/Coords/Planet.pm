@@ -39,7 +39,7 @@ our %PLANET = map { $_, $i++  } @PLANETS;
 
 =head2 Constructor
 
-=over
+=over 4
 
 =item B<new>
 
@@ -169,7 +169,7 @@ Tim Jenness E<lt>t.jenness@jach.hawaii.eduE<gt>
 
 =head1 COPYRIGHT
 
-Copyright (C) 2001 Particle Physics and Astronomy Research Council.
+Copyright (C) 2001-2002 Particle Physics and Astronomy Research Council.
 All Rights Reserved. This program is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 

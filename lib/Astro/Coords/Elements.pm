@@ -22,7 +22,8 @@ use warnings;
 
 our $VERSION = '0.01';
 
-use Astro::SLA ();
+# Need working slaPlante
+use Astro::SLA 0.95 ();
 use base qw/ Astro::Coords /;
 
 use overload '""' => "stringify";
@@ -32,7 +33,7 @@ use overload '""' => "stringify";
 
 =head2 Constructor
 
-=over
+=over 4
 
 =item B<new>
 
@@ -87,8 +88,13 @@ sub new {
   my $class = ref($proto) || $proto;
 
   my %opts = @_;
-  return undef unless exists $opts{elements}
-    and ref($opts{elements} eq "HASH");
+  return undef unless (exists $opts{elements}
+    && ref($opts{elements}) eq "HASH");
+
+  # Sanity check
+  for (qw/ EPOCH ORBINC ANODE PERIH AORQ E/) {
+    return undef unless exists $opts{elements}->{$_};
+  }
 
 
   # Copy the elements
@@ -191,9 +197,9 @@ sub _apparent {
   my $lat = (defined $tel ? $tel->lat : 0.0 );
   my %el = $self->elements;
   my $jform;
-  if (exists $el{DM}) {
+  if (exists $el{DM} and defined $el{DM}) {
     $jform = 1;
-  } elsif (exists $el{AORL}) {
+  } elsif (exists $el{AORL} and defined $el{AORL}) {
     $jform = 2;
     $el{DM} = 0;
   } else {
@@ -227,7 +233,7 @@ Tim Jenness E<lt>t.jenness@jach.hawaii.eduE<gt>
 
 =head1 COPYRIGHT
 
-Copyright (C) 2001 Particle Physics and Astronomy Research Council.
+Copyright (C) 2001-2002 Particle Physics and Astronomy Research Council.
 All Rights Reserved. This program is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 

@@ -21,6 +21,8 @@ Astro::Coords - Class for handling astronomical coordinates
 
   $c = new Astro::Coords( elements => \%elements );
 
+  $c = new Astro::Coords( az => 345, el => 45 );
+
   # Return FK5 J2000 coordinates in radians
   ($ra, $dec) = $c->fk5();
 
@@ -50,6 +52,10 @@ Astro::Coords - Class for handling astronomical coordinates
   # Obtain full summary as an array
   @summary = $c->array;
 
+  # See if the target is observable for the current time
+  # and telescope
+  $obs = 1 if $c->isObservable;
+
   # Calculate distance to another coordinate (in radians)
   $distance = $c->distance( $c2 ); # not yet supported
 
@@ -69,11 +75,14 @@ use strict;
 use warnings;
 use Carp;
 
-our $VERSION = '0.01';
+our $VERSION = '0.03';
 
 use Astro::SLA ();
 use Astro::Coords::Equatorial;
+use Astro::Coords::Elements;
 use Astro::Coords::Planet;
+use Astro::Coords::Fixed;
+use Astro::Coords::Calibration;
 
 use Time::Piece  '1.00'; # override gmtime
 
@@ -107,7 +116,7 @@ Orbital elements as:
 where C<%elements> must contain the names of the elements
 as used in the SLALIB routine slaPlante.
 
-Fixed coordinate frames can be specified using:
+Fixed astronomical oordinate frames can be specified using:
 
   $c = new Astro::Coords( ra => 
                           dec =>
@@ -124,6 +133,23 @@ The C<units> can be specified as "sexagesimal" (when using colon or
 space-separated strings), "degrees" or "radians". The default is
 determined from context.
 
+Fixed (as in fixed on Earth) coordinate frames can be specified
+using:
+
+  $c = new Astro::Coords( dec =>
+                          ha =>
+                          tel =>
+                          az =>
+                          el =>
+                          units =>
+                        );
+
+where C<az> and C<el> are the Azimuth and Elevation. Hour Angle
+and Declination require a telescope. Units are as defined above.
+
+Finally, if no arguments are given the object is assumed
+to be of type C<Astro::Coords::Calibration>.
+
 Returns C<undef> if an object could not be created.
 
 =cut
@@ -134,22 +160,48 @@ sub new {
   my %args = @_;
 
   my $obj;
-  if (exists $args{planet}) {
 
+  # Always try for a planet object first if $args{planet} is used
+  # (it might be that ra/dec are being specified and planet is a target
+  # name - this allows all the keys to be specified at once and the
+  # object can decide the most likely coordinate object to use
+  # This has the distinct disadvantage that planet is always tried
+  # even though it is rare. We want to be able to throw anything
+  # at this without knowing what we are.
+  if (exists $args{planet} and defined $args{planet}) {
     $obj = new Astro::Coords::Planet( $args{planet} );
+  }
 
-  } elsif (exists $args{elements}) {
+  # planet did not work. Try something else.
+  unless (defined $obj) {
 
-    $obj = new Astro::Coords::Elements( $args{planet} );
+    # For elements we must not only check for the elements key
+    # but also make sure that that key points to a hash containing
+    # at least the EPOCH key
+    if (exists $args{elements} and defined $args{elements}
+       and UNIVERSAL::isa($args{elements},"HASH") 
+       and exists $args{elements}{EPOCH}
+       and defined $args{elements}{EPOCH}) {
 
-  } elsif (exists $args{type}) {
+      $obj = new Astro::Coords::Elements( elements => $args{elements} );
 
-    $obj = new Astro::Coords::Equatorial( %args );
+    } elsif (exists $args{type} and defined $args{type}) {
 
-  } else {
+      $obj = new Astro::Coords::Equatorial( %args );
+
+    } elsif (exists $args{az} or exists $args{el} or exists $args{ha}) {
+
+      $obj = new Astro::Coords::Fixed( %args );
+
+    } elsif ( scalar keys %args == 0 ) {
+
+      $obj = new Astro::Coords::Calibration();
+
+    } else {
     # unable to work out what you are asking for
-    return undef;
+      return undef;
 
+    }
   }
 
   return $obj;
@@ -206,7 +258,8 @@ sub datetime {
   my $self = shift;
   if (@_) {
     my $time = shift;
-    croak "Argument does not have an mjd() method"
+    croak "datetime: Argument does not have an mjd() method [class="
+      . ( ref($time) ? ref($time) : $time) ."]"
       unless (UNIVERSAL::can($time, "mjd"));
     $self->{DateTime} = $time;
   }
@@ -261,7 +314,12 @@ Get the hour angle for the currently stored LST. Default units are in
 radians.
 
   $ha = $c->ha;
-  $ha = $c->ha( format => "deg" );
+  $ha = $c->ha( format => "h" );
+
+If you wish to normalize the Hour Angle to +/- 12h use the
+normalize key.
+
+  $ha = $c->ha( normalize => 1 );
 
 =cut
 
@@ -270,6 +328,10 @@ sub ha {
   my %opt = @_;
   $opt{format} = "radians" unless defined $opt{format};
   my $ha = $self->_lst - $self->ra_app;
+  # Normalize to +/-pi
+  $ha = Astro::SLA::slaDrange( $ha )
+    if $opt{normalize};
+
   # Convert to hours if we are using a string or hour format
   $ha = $self->_cvt_tohrs( \$opt{format}, $ha);
   return $self->_cvt_fromrad( $ha, $opt{format});
@@ -311,6 +373,26 @@ sub el {
   return $self->_cvt_fromrad( ($self->_azel)[1], $opt{format});
 }
 
+=item B<airmass>
+
+Airmass of the source for the currently stored time at the current
+telescope.
+
+  $am = $c->airmass();
+
+Value determined from the current elevation.
+
+=cut
+
+sub airmass {
+  my $self = shift;
+  my $el = $self->el;
+  my $zd = Astro::SLA::DPIBY2 - $el;
+  return Astro::SLA::slaAirmas( $zd );
+}
+
+
+
 =item B<pa>
 
 Parallactic angle of the source for the currently stored time at the
@@ -333,6 +415,72 @@ sub pa {
   return $self->_cvt_fromrad(Astro::SLA::slaPa($ha, $dec, $lat), $opt{format});
 }
 
+=item B<isObservable>
+
+Determine whether the coordinates are accessible for the current
+time and telescope.
+
+  $isobs = $c->isObservable;
+
+Returns false if a telescope has not been specified (see
+the C<telescope> method) or if the specified telescope does not
+know its own limits.
+
+=cut
+
+sub isObservable {
+  my $self = shift;
+
+  # Get the telescope
+  my $tel = $self->telescope;
+  return 0 unless defined $tel;
+
+  # Get the limits hash
+  my %limits = $tel->limits;
+
+  if (exists $limits{type}) {
+
+    if ($limits{type} eq 'AZEL') {
+
+      # Get the current elevation of the source
+      my $el = $self->el;
+
+      if ($el > $limits{el}{min} and $el < $limits{el}{max}) {
+	return 1;
+      } else {
+	return 0;
+      }
+
+    } elsif ($limits{type} eq 'HADEC') {
+
+      # Get the current HA
+      my $ha = $self->ha( normalize => 1 );
+
+      if ( $ha > $limits{ha}{min} and $ha < $limits{ha}{max}) {
+	my $dec= $self->dec_app;
+
+	if ($dec > $limits{dec}{min} and $dec < $limits{dec}{max}) {
+	  return 1;
+	} else {
+	  return 0;
+	}
+
+      } else {
+	return 0;
+      }
+
+    } else {
+      # have no idea
+      return 0;
+    }
+
+  } else {
+    return 0;
+  }
+
+}
+
+
 =item B<array>
 
 Return a summary of this object in the form of an array containing
@@ -349,6 +497,44 @@ sub array {
   my $self = shift;
   croak "The method array() must be subclassed\n";
 }
+
+=item B<status>
+
+Return a status string describing the current coordinates.
+This consists of the current elevation, azimuth, hour angle
+and declination. If a telescope is defined the observability
+of the target is included.
+
+  $status = $c->status;
+
+=cut
+
+sub status {
+  my $self = shift;
+  my $string;
+
+  $string .= "Coordinate type:" . $self->type ."\n";
+
+  $string .= "Elevation:      " . $self->el(format=>'d')." deg\n";
+  $string .= "Azimuth  :      " . $self->az(format=>'d')." deg\n";
+  my $ha = Astro::SLA::slaDrange( $self->ha ) * Astro::SLA::DR2H;
+  $string .= "Hour angle:     " . $ha ." hrs\n";
+  $string .= "Apparent dec:   " . $self->dec_app(format=>'d')." deg\n";
+
+  if (defined $self->telescope) {
+    $string .= "Telescope:      " . $self->telescope->fullname . "\n";
+    if ($self->isObservable) {
+      $string .= "The target is currently observable\n";
+    } else {
+      $string .= "The target is not currently observable\n";
+    }
+  }
+
+  $string .= "For time ". $self->datetime ."\n";
+
+  return $string;
+}
+
 
 =item B<_lst>
 
@@ -428,9 +614,6 @@ sub _cvt_tohrs {
   return $rad;
 }
 
-
-=cut
-
 =item B<_cvt_fromrad>
 
 Convert the supplied value (in radians) to the desired output
@@ -477,6 +660,90 @@ sub _cvt_fromrad {
   return $in;
 }
 
+=item B<_cvt_torad>
+
+Convert from the supplied units to radians. The following
+units are supported:
+
+ sexagesimal - A string of format either dd:mm:ss or "dd mm ss"
+ degrees     - decimal degrees
+ radians     - radians
+ hours       - decimal hours
+
+If units are not supplied (undef) default is to assume "sexagesimal"
+if the supplied string contains spaces or colons, "degrees" if the
+supplied number is greater than 2*PI (6.28), and "radians" for all
+other values.
+
+  $radians = Astro::Coords::Equatorial->_cvt_torad("sexagesimal",
+                                                   "5:22:63")
+
+An optional final argument can be used to indicate that the supplied
+string is in hours rather than degrees. This is only used when
+units is set to "sexagesimal".
+
+Returns undef on error.
+
+=cut
+
+# probably need to use a hash argument
+
+sub _cvt_torad {
+  my $self = shift;
+  my $units = shift;
+  my $input = shift;
+  my $hms = shift;
+
+  return undef unless defined $input;
+
+  # Clean up the string
+  $input =~ s/^\s+//g;
+  $input =~ s/\s+$//g;
+
+  # guess the units
+  unless (defined $units) {
+
+    # Now if we have a space or : then we have a real string
+    if ($input =~ /(:|\s)/) {
+      $units = "sexagesimal";
+    } elsif ($input > Astro::SLA::D2PI) {
+      $units = "degrees";
+    } else {
+      $units = "radians";
+    }
+
+  }
+
+  # Now process the input - starting with strings
+  my $output;
+  if ($units =~ /^s/) {
+
+    # Need to clean up the string for slalib
+    $input =~ s/:/ /g;
+
+    my $nstrt = 1;
+    Astro::SLA::slaDafin( $input, $nstrt, $output, my $j);
+    $output = undef unless $j == 0;
+
+    # If we were in hours we need to multiply by 15
+    $output *= 15.0 if $hms;
+
+  } elsif ($units =~ /^h/) {
+    # Hours in decimal
+    $output = $input * Astro::SLA::DH2R;
+
+  } elsif ($units =~ /^d/) {
+    # Degrees decimal
+    $output = $input * Astro::SLA::DD2R;
+
+  } else {
+    # Already in radians
+    $output = $input;
+  }
+
+  return $output;
+}
+
 =back
 
 =head1 REQUIREMENTS
@@ -489,7 +756,7 @@ Tim Jenness E<lt>t.jenness@jach.hawaii.eduE<gt>
 
 =head1 COPYRIGHT
 
-Copyright (C) 2001 Particle Physics and Astronomy Research Council.
+Copyright (C) 2001-2002 Particle Physics and Astronomy Research Council.
 All Rights Reserved. This program is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 
