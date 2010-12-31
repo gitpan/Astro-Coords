@@ -11,6 +11,8 @@ Astro::Coords::Angle::Hour - Representation of an angle in units of hours
   $ha = new Astro::Coords::Angle::Hour( "12h30m22.4s", units => 'sex');
   $ha = new Astro::Coords::Angle::Hour( 12.53, units => 'hour);
 
+  $ha = new Astro::Coords::Angle::Hour( 12.53 );
+
 =head1 DESCRIPTION
 
 Class similar to C<Astro::Coords::Angle> but representing the angle
@@ -18,7 +20,9 @@ as a time. Suitable for use as hour angle or Right Ascension.
 Inherits from C<Astro::Coords::Angle>.
 
 For hour angle a range of "PI" is suitable, for Right Ascension use "2PI".
-Default range is none at all.
+Default range is none at all. If no units are provided, the units will be
+guessed using the same scheme as for C<Astro::Coords::Angle> except that
+values greater than 2PI will be assumed to be decimal hours.
 
 =cut
 
@@ -76,7 +80,8 @@ minutes and seconds.
 
 sub in_format {
   my $self = shift;
-  my $format = lc(shift);
+  my $format = shift;
+  $format = lc($format) if $format;
   return $self->hours() if (defined $format && $format =~ /^h/);
   return $self->SUPER::in_format( $format );
 }
@@ -163,23 +168,43 @@ sub _cvt_torad {
   my $input = shift;
   my $units = shift;
 
+  # If we haven't got any units attempt to guess some
+  $units = $self->_guess_units( $input ) unless defined $units;
+
   # if units are hours, tell the base class we have degrees
+  # $unt is the unit that will be reported to the base class
+  # $units is the unit known to the subclass
   my $unt = $units;
   if (defined $units && $units =~ /^h/) {
     $unt = 'deg';
-  } elsif (!defined $units) {
-    $unt = $self->_guess_units( $input );
   }
 
   # Do the conversion
   my $rad = $self->SUPER::_cvt_torad( $input, $unt );
 
   # scale if we had sexagesimal or hour as units
-  if ($unt =~ /^[sh]/) {
+  if ($units =~ /^[sh]/) {
     $rad *= 15;
   }
 
   return $rad;
+}
+
+=item B<_guess_units>
+
+Guess the units. Same as base class except that values greater than 2PI
+radians are assumed to be hours rather than degrees.
+
+ $guess = $hr->_guess_units( $input );
+
+=cut
+
+sub _guess_units {
+  my $self = shift;
+  my $input = shift;
+  my $guess = $self->SUPER::_guess_units( $input );
+  $guess = 'h' if $guess =~ /^d/;
+  return $guess;
 }
 
 =item B<_r2f>
@@ -213,7 +238,7 @@ Copyright (C) 2004-2005 Tim Jenness. All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
-Foundation; either version 2 of the License, or (at your option) any later
+Foundation; either version 3 of the License, or (at your option) any later
 version.
 
 This program is distributed in the hope that it will be useful,but WITHOUT ANY

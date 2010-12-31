@@ -35,28 +35,33 @@ use Carp;
 
 use Astro::Coords::Angle;
 
+use constant PAZERO => new Astro::Coords::Angle( 0.0 );
+
 use vars qw/ @PROJ  @SYSTEMS /;
 
 our $VERSION = '0.01';
 
 # Allowed projections
-@PROJ = qw| SIN TAN ARC |;
+@PROJ = qw| SIN TAN ARC DIRECT |;
 
-# Allowed coordinate systems
-@SYSTEMS = qw|
+# Allowed coordinate systems  J\d+ and B\d+ are also allowed by the
+# PTCS - these are pattern matches
+@SYSTEMS = (qw|
 	      TRACKING
 	      GAL
 	      ICRS
 	      ICRF
-	      J2000
-	      B1950
+              |,
+	      qr|J\d+(\.\d)?|,
+	      qr|B\d+(\.\d)?|,
+            qw|
 	      APP
 	      HADEC
 	      AZEL
 	      MOUNT
 	      OBS
 	      FPLANE
-	      |;
+	      |);
 
 =head1 METHODS
 
@@ -76,6 +81,11 @@ arguments (defaulting to TAN and J2000 respectively).
   my $off = new Astro::Coords::Offset( @off, system => "AZEL", 
                                              projection => "SIN");
 
+  my $off = new Astro::Coords::Offset( @off, system => "AZEL", 
+                                             projection => "SIN",
+                                             posang => $pa,
+                                     );
+
 =cut
 
 sub new {
@@ -90,8 +100,19 @@ sub new {
 
   my %options = @_;
 
-  my $system = (exists $options{system} ? $options{system} : "J2000" );
-  my $proj = (exists $options{projection} ? $options{projection} : "TAN" );
+  # Aim for case-insensitive keys
+  my %merged = (
+		  system => "J2000",
+		  projection => 'TAN',
+		  tracking_system => undef,
+		  posang => undef );
+
+  for my $k (keys %options) {
+    my $lk = lc($k);
+    if (exists $merged{$lk}) {
+      $merged{$lk} = $options{$k};
+    }
+  }
 
   # Store the offsets as Angle objects if they are not already
   $dc1 = new Astro::Coords::Angle( $dc1, units => 'arcsec' )
@@ -104,15 +125,18 @@ sub new {
   my $off = bless {
 		   OFFSETS => [ $dc1, $dc2 ],
 		   PROJECTION => undef,
+		   POSANG   => PAZERO,
 		   SYSTEM       => undef,
 		   TRACKING_SYSTEM => undef,
 		  }, $class;
 
   # Use accessor to set so that we get validation
-  $off->projection( $proj );
-  $off->system( $system );
-  $off->tracking_system( $options{tracking_system} )
-    if exists $options{tracking_system};
+  $off->projection( $merged{projection} );
+  $off->system( $merged{system} );
+  $off->tracking_system( $merged{tracking_system} )
+    if defined $merged{tracking_system};
+  $off->posang( $merged{posang} )
+    if defined $merged{posang};
 
   return $off;
 }
@@ -138,6 +162,34 @@ sub offsets {
   return @{$self->{OFFSETS}};
 }
 
+=item B<xoffset>
+
+Returns just the X offset.
+
+  $x = $off->xoffset;
+
+=cut
+
+sub xoffset {
+  my $self = shift;
+  my @xy = $self->offsets;
+  return $xy[0];
+}
+
+=item B<yoffset>
+
+Returns just the Y offset.
+
+  $x = $off->yoffset;
+
+=cut
+
+sub yoffset {
+  my $self = shift;
+  my @xy = $self->offsets;
+  return $xy[1];
+}
+
 =item B<system>
 
 Coordinate system of this offset. Can be different to the coordinate
@@ -148,6 +200,8 @@ JAC TCS XML (see L<"SEE ALSO"> section at end). TRACKING is special
 since it can change, depending on which output coordinate frame is
 in use. See the C<tracking_system> attribute for more details.
 
+"Az/El" is treated as "AZEL" for backwards compatibility reasons.
+
 =cut
 
 sub system {
@@ -155,12 +209,62 @@ sub system {
   if (@_) { 
     my $p = shift;
     $p = uc($p);
-    my $match = join("|",@SYSTEMS);
-    croak "Unknown system '$p'"
-      unless $p =~ /^$match$/;
-    $self->{SYSTEM} = $p;
+    $p = "AZEL" if $p eq 'AZ/EL';
+
+    # need to make sure that we convert the input system into
+    # a TCS system
+    my $match;
+    for my $compare (@SYSTEMS) {
+	if ($p =~ /^$compare/) {
+	    if (!defined $match) {
+                if (ref($compare)) {
+                   # regex so we just take the input
+                   $match = $p;
+                } else {
+                   # exact match to start of string so take the TCS value
+   	 	   $match = $compare;
+                }
+	    } else {
+		croak "Multiple matches for system '$p'";
+	    }
+	}
+    }
+    croak "Unknown system '$p'" unless defined $match;
+    $self->{SYSTEM} = $match;
   }
   return $self->{SYSTEM};
+}
+
+=item B<posang>
+
+Position angle of this offset as an C<Astro::Coords::Angle> object.
+Position angle follows the normal "East of North" convention.
+
+  $off->posang( 45 );
+  $pa = $off->posang;
+
+If a number is supplied it is assumed to be in degrees (this
+matches the common usage in the JCMT TCS XML DTD).
+
+By default returns a position angle of 0 deg.
+
+=cut
+
+sub posang {
+  my $self = shift;
+  if (@_) {
+    my $pa = shift;
+    if (!defined $pa) {
+      $self->{POSANG} = PAZERO;
+    } elsif (UNIVERSAL::isa($pa, "Astro::Coords::Angle")) {
+      $self->{POSANG} = $pa;
+    } elsif ($pa =~ /\d/) {
+      $self->{POSANG} = new Astro::Coords::Angle( $pa, units => 'deg');
+    } else {
+      croak "Position angle for offset supplied in non-recognizable form ('$pa')";
+    }
+  }
+  return $self->{POSANG};
 }
 
 =item B<projection>
@@ -253,6 +357,53 @@ sub tracking_system {
 
 =back
 
+=head2 General Methods
+
+=over 4
+
+=item B<invert>
+
+Return a new offset object with the sense of the offset inverted.
+
+  $inv = $offset->invert;
+
+=cut
+
+# We could do this by adding 180 deg to posang but people really
+# expect the sign to change
+
+sub invert {
+  my $self = shift;
+
+  my @xy = map { $_->negate } $self->offsets;
+  my $pa = $self->posang->clone;
+  $pa = undef if $pa->radians == 0;
+  return $self->new( @xy, system => $self->system,
+		     projection => $self->projection,
+		     posang => $pa);
+}
+
+=item B<clone>
+
+Create a cloned copy of this offset.
+
+  $clone = $offset->clone;
+
+=cut
+
+sub clone {
+  my $self = shift;
+  my @xy = map { $_->clone() } $self->offsets;
+  my $pa = $self->posang->clone;
+  $pa = undef if $pa->radians == 0;
+  return $self->new( @xy, posang => $pa,
+		     system => $self->system,
+		     projection => $self->projection
+		   );
+}
+
+=back
+
 =head1 SEE ALSO
 
 The allowed offset types are designed to match the specification used
@@ -266,12 +417,12 @@ Tim Jenness E<lt>tjenness@cpan.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright 2002-2005 Particle Physics and Astronomy Research Council.
+Copyright 2002-2006 Particle Physics and Astronomy Research Council.
 All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
-Foundation; either version 2 of the License, or (at your option) any later
+Foundation; either version 3 of the License, or (at your option) any later
 version.
 
 This program is distributed in the hope that it will be useful,but WITHOUT ANY

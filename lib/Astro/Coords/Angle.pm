@@ -461,6 +461,37 @@ sub in_format {
   }
 }
 
+=item B<clone>
+
+Create new cloned copy of this object.
+
+  $clone = $ang->clone;
+
+=cut
+
+sub clone {
+  my $self = shift;
+  return bless { %$self }, ref $self;
+}
+
+=item B<negate>
+
+Negate the sense of the angle, returning a new angle object.
+
+  $neg = $ang->negate;
+
+Not allowed if the range is defined as 0 to 2PI.
+
+=cut
+
+sub negate {
+  my $self = shift;
+  croak "Angle can not be negated since its range is 0 to 2PI"
+    if $self->range eq '2PI';
+  my $rad = $self->radians;
+  return $self->new( $rad, units => 'radians', range => $self->range );
+}
+
 =back
 
 =head2 Overloading
@@ -761,7 +792,7 @@ Copyright (C) 2004-2005 Tim Jenness. All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
-Foundation; either version 2 of the License, or (at your option) any later
+Foundation; either version 3 of the License, or (at your option) any later
 version.
 
 This program is distributed in the hope that it will be useful,but WITHOUT ANY

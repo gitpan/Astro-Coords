@@ -1,3 +1,131 @@
+2010-12-02  Tim Jenness  <tjenness@cpan.org>
+
+	---- CPAN v0.12 ----
+
+2010-12-02  Tim Jenness  <tjenness@cpan.org>
+
+	* Build.PL: Use Module::Build
+
+2008-12-30  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords.pm: Fix some warnings.
+
+	* lib/Astro/Coords/Angle/Hour.pm: Fix some warnings.
+
+2008-06-02  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords/Offset.pm: Fix regexps in system matching.
+
+	* lib/Astro/Coords/Offset.pm: Ensure that the output system is a
+	PTCS-compliant system.
+
+2008-04-09  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords.pm (_lst): Fix problems with fractional seconds in LST
+	calculation and in datetime cloning.
+
+2007-05-30  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords.pm (calculate): Make sure that the calculate()
+	method does not trash the existing datetime().
+
+2007-02-05  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords/Angle/Hour.pm: Fix constructor so that it
+	correctly recognizes decimal hours.
+
+2006-10-18  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords/Offset.pm (system): Allow B1900 and J2006.4 etc
+	as offset system.
+
+2006-01-09  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords/Offset.pm (new): Allow for case-insensitive
+	keys in constructor.  Allow "Az/El" to be a synonym for AZEL.
+
+2005-12-08  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords/Offset.pm (invert): Add invert method
+
+	* lib/Astro/Coords/Angle.pm (negate): Add negate method
+
+	* lib/Astro/Coords/Offset.pm (clone): Add clone method
+
+	* lib/Astro/Coords/Angle.pm (clone): Add clone method
+
+	* lib/Astro/Coords/Offset.pm: Add DIRECT offset projection to match PTCS
+
+2005-12-05  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords/Offset.pm (posang): Add posang() method.
+
+2005-10-28  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords.pm (datetime_is_unsafe): Implement caching
+	scheme for static dates. datetime_is_unsafe() method is required
+	if the datetime object is to be tweaked externally. Large speed
+	improvements.
+
+2005-10-21  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords.pm (vbary): Add support for Barycentric velocities.
+
+2005-08-24  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords/Equatorial.pm (set_vel_pars): Add ability to
+	set the velocity parameters after object construction (but not in
+	base class)
+
+2005-08-06  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords/Fixed.pm: Override default meridian_time and
+	transit_el calculations for fixed sources.
+
+	* lib/Astro/Coords.pm (status): Allow meridian time and transit
+	elevation to be undef.
+
+2005-07-30  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords.pm (calculate): Fix missing DateTime check in
+	the "calculate" method.
+
+2005-07-08  Brad Cavanagh  <b.cavanagh@jach.hawaii.edu>
+
+	* lib/Astro/Coords.pm (distance): Factor out RA/Dec lookup when
+	calculating distance to reduce number of calls to radec() by 50%.
+
+2005-05-20  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords.pm: Pre-create a DateTime::TimeZone object
+	rather than using a 'UTC' string. This improves performance when
+	using many calls to the datetime method.
+
+2005-04-06  Tim Jenness  <tjenness@cpan.org>
+
+	* lib/Astro/Coords/Elements.pm (apparent): Include the target name
+	in the error message when failing to determine the apparent RA/Dec.
+
+2005-03-16  Tim Jenness  <tjenness@cpan.org>
+
+	* t/basic.t: Test the array Elements constructor
+
+	* lib/Astro/Coords.pm (new): Document upgrade to elements
+	interface to accept array() and enhance the test for that case.
+
+	* lib/Astro/Coords/Elements.pm (new): Now allow the return value
+	from the array() method to be provided to the constructor.
+
+	* lib/Astro/Coords/Elements.pm (array): For comets, now return the
+	epoch of perihelion as the final member of the array and the epoch
+	of elements as the initial element in the array. This allows both
+	epochs to be retained without confusion (since the penultimate
+	member will be undefined for the cometary case) but constitutes a
+	change in the published interface.
+
+	* lib/Astro/Coords/Elements.pm (apparent): Include the target name
+	in the error message when failing to perturb the elements.
+
 2005-02-21  Tim Jenness  <tjenness@cpan.org>
 
 	---- RELEASE V0.10 to CPAN ----
@@ -41,7 +169,7 @@
 2004-12-08  Tim Jenness  <tjenness@cpan.org>
 
 	* t/coco.t: Finish test comparison with coco for simple B1950
-	coordinate	
+	coordinate
 
 	* lib/Astro/Coords.pm (native): Add native() method to keep track
 	of original form.
@@ -57,7 +185,7 @@
 2004-12-04  Tim Jenness  <tjenness@cpan.org>
 
 	* t/angle.t: Add tests for Angle classes
-	
+
 2004-11-21  Tim Jenness  <tjenness@cpan.org>
 
 	* lib/Astro/Coords/Planet.pm: Add diam() method to return the
@@ -76,7 +204,7 @@
 	meridian time for fast moving objects (moon now works).
 	(rise_time): Add "nearest" option to allow back tracking
 	DateTime support now much tidier.
-	
+
 
 2004-10-20  Tim Jenness  <tjenness@cpan.org>
 
@@ -89,7 +217,7 @@
 	* lib/Astro/Coords/Angle.pm: Create
 
 	* lib/Astro/Coords/Angle/Hour.pm: Create
-	
+
 2004-04-12  Tim Jenness  <tjenness@cpan.org>
 
 	* lib/Astro/Coords/Equatorial.pm (_ecllonglat): Add ecliptic
@@ -99,7 +227,7 @@
 
 	* lib/Astro/Coords/Equatorial.pm: Proper motions and parallax
 	no longer default to zero if not given in constructor.
-	
+
 2004-02-25  Brad Cavanagh  <b.cavanagh@jach.hawaii.edu>
 
 	* lib/Astro/Coords/Equatorial.pm: Allow for various equinoxes,
@@ -133,8 +261,8 @@
 	* lib/Astro/Coords/Equatorial.pm (new): Do not instantiate an
 	object if something is missing from the constructor.
 
-	* lib/Astro/Coords.pm (ha_set: Deal with case where source never
-	has a set time 
+	* lib/Astro/Coords.pm (ha_set): Deal with case where source never
+	has a set time
 
 2003-07-26  Tim Jenness  <tjenness@cpan.org>
 
@@ -168,7 +296,7 @@
 
 2002-08-16  Tim Jenness  <tjenness@cpan.org>
 
-	* lib/Astro/Coords/Elements.pm (_apparent): Add perturbation calculation 
+	* lib/Astro/Coords/Elements.pm (_apparent): Add perturbation calculation
 
 	* lib/Astro/Coords.pm (dec&ra): Add J2000 RA&Dec for all modes.
 
@@ -180,7 +308,7 @@
 
 	* t/basic.t: Test now works for orbital elements
 
-	* lib/Astro/Coords/Elements.pm (new): Now support '1999 Apr 1.445' 
+	* lib/Astro/Coords/Elements.pm (new): Now support '1999 Apr 1.445'
 	format for Epoch
 
 	* lib/Astro/Coords.pm (new): Add support for Interpolated coordinates
@@ -193,4 +321,4 @@
 2002-05-24 Tim Jenness <tjenness@cpan.org>
 
 	Release v0.03 to CPAN
-	
+

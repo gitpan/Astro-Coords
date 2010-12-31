@@ -108,7 +108,7 @@ use Carp;
 use vars qw/ $DEBUG /;
 $DEBUG = 0;
 
-our $VERSION = '0.09';
+our $VERSION = '0.12';
 
 use Math::Trig qw/ acos /;
 use Astro::SLA ();
@@ -142,6 +142,9 @@ use constant AU2KM => 149.59787066e6;
 # Speed of light ( km/s )
 use constant CLIGHT => 2.99792458e5;
 
+# UTC TimeZone
+use constant UTC => new DateTime::TimeZone( name => 'UTC' );
+
 =head1 METHODS
 
 =head2 Constructor
@@ -168,9 +171,12 @@ A planet name can be specified with:
 Orbital elements as:
 
   $c = new Astro::Coords( elements => \%elements );
+  $c = new Astro::Coords( elements => \@array );
 
 where C<%elements> must contain the names of the elements
-as used in the SLALIB routine slaPlante.
+as used in the SLALIB routine slaPlante, and @array is the
+contents of the array returned by calling the array() method
+on another Elements object.
 
 Fixed astronomical oordinate frames can be specified using:
 
@@ -235,11 +241,13 @@ sub new {
     # but also make sure that that key points to a hash containing
     # at least the EPOCH or EPOCHPERIH key
     if (exists $args{elements} and defined $args{elements}
-       && UNIVERSAL::isa($args{elements},"HASH") 
-       &&  (exists $args{elements}{EPOCH}
+       && (UNIVERSAL::isa($args{elements},"HASH") # A hash
+       &&  ((exists $args{elements}{EPOCH}
        and defined $args{elements}{EPOCH})
        ||  (exists $args{elements}{EPOCHPERIH}
-       and defined $args{elements}{EPOCHPERIH})
+       and defined $args{elements}{EPOCHPERIH}))) ||
+	( ref($args{elements}) eq 'ARRAY' && # ->array() ref
+	  $args{elements}->[0] eq 'ELEMENTS')
      ) {
 
       $obj = new Astro::Coords::Elements( %args );
@@ -310,6 +318,8 @@ sub telescope {
     my $tel = shift;
     return undef unless UNIVERSAL::isa($tel, "Astro::Telescope");
     $self->{Telescope} = $tel;
+    # Telescope is part of the caching scheme
+    $self->_calc_cache_key();
   }
   return $self->{Telescope};
 }
@@ -337,6 +347,12 @@ set to false.
 
 A copy of the input argument is created, guaranteeing a UTC representation.
 
+Note that due to the possibility of an optimized caching scheme being
+used, you should not adjust this object after it has been cloned. The
+object is assumed to be immutable by the module internals. If you
+really do require that it be adjusted externally, use the
+C<datetime_is_unsafe> method to indicate this to the module.
+
 =cut
 
 sub datetime {
@@ -350,11 +366,14 @@ sub datetime {
       if (defined $time && !UNIVERSAL::can($time, "mjd"));
     $self->{DateTime} = _clone_time( $time );
     $self->usenow(0);
+    # Changing usenow will have forced a recalculation of the cache key
+    # so no update is required here
+    # $self->_calc_cache_key;
   }
   if (defined $self->{DateTime} && ! $self->usenow) {
     return $self->{DateTime};
   } else {
-    return DateTime->now( time_zone => 'UTC' );
+    return DateTime->now( time_zone => UTC );
   }
 }
 
@@ -391,8 +410,30 @@ sub usenow {
   my $self = shift;
   if (@_) {
     $self->{UseNow} = shift;
+    # Since this affects caching we need to force a key check if this value
+    # is updated
+    $self->_calc_cache_key();
   }
   return $self->{UseNow};
+}
+
+=item B<datetime_is_unsafe>
+
+If true, indicates that the DateTime object stored in this object is
+not guranteed to be immutable by the externally user. This effectively
+turns off the internal cache.
+
+  $c->datetime_is_unsafe();
+
+=cut
+
+sub datetime_is_unsafe {
+  my $self = shift;
+  if (@_) {
+    $self->{DATETIME_IS_UNSAFE} = shift;
+    $self->_calc_cache_key;
+  }
+  return $self->{DATETIME_IS_UNSAFE};
 }
 
 =item B<comment>
@@ -467,13 +508,21 @@ as C<Astro::Coords::Angle> objects.
 
 sub azel {
   my $self = shift;
-  my $ha = $self->ha;
-  my $dec = $self->dec_app;
-  my $tel = $self->telescope;
-  my $lat = ( defined $tel ? $tel->lat : 0.0);
-  Astro::SLA::slaDe2h( $ha, $dec, $lat, my $az, my $el );
-  $az = new Astro::Coords::Angle( $az, units => 'rad', range => '2PI' );
-  $el = new Astro::Coords::Angle( $el, units => 'rad' );
+
+  my ($az,$el) = $self->_cache_read( "AZ", "EL" );
+
+  if (!defined $az || !defined $el) {
+
+    my $ha = $self->ha;
+    my $dec = $self->dec_app;
+    my $tel = $self->telescope;
+    my $lat = ( defined $tel ? $tel->lat : 0.0);
+    Astro::SLA::slaDe2h( $ha, $dec, $lat, $az, $el );
+    $az = new Astro::Coords::Angle( $az, units => 'rad', range => '2PI' );
+    $el = new Astro::Coords::Angle( $el, units => 'rad' );
+
+    $self->_cache_write( "AZ" => $az, "EL" => $el );
+  }
   return ($az, $el);
 }
 
@@ -493,7 +542,10 @@ sub ra_app {
   my $self = shift;
   my %opt = @_;
 
-  my $ra = ($self->apparent)[0];
+  my $ra = $self->_cache_read( "RA_APP" );
+  if (!defined $ra) {
+    $ra = ($self->apparent)[0];
+  }
   return $ra->in_format( $opt{format} );
 }
 
@@ -513,7 +565,10 @@ and default calling convention.
 sub dec_app {
   my $self = shift;
   my %opt = @_;
-  my $dec = ($self->apparent)[1];
+  my $dec = $self->_cache_read( "DEC_APP" );
+  if (!defined $dec) {
+    $dec = ($self->apparent)[1];
+  }
   return $dec->in_format( $opt{format} );
 }
 
@@ -538,10 +593,13 @@ and default calling convention.
 sub ha {
   my $self = shift;
   my %opt = @_;
-  my $ha = $self->_lst - $self->ra_app;
 
-  # Always normalize?
-  $ha = new Astro::Coords::Angle::Hour( $ha, units => 'rad', range => 'PI' );
+  my $ha = $self->_cache_read( "HA" );
+  if (!defined $ha) {
+    $ha = $self->_lst - $self->ra_app;
+    # Always normalize?
+    $ha = new Astro::Coords::Angle::Hour( $ha, units => 'rad', range => 'PI' );
+  }
   return $ha->in_format( $opt{format} );
 }
 
@@ -560,7 +618,10 @@ If no telescope is defined the equator is used.
 sub az {
   my $self = shift;
   my %opt = @_;
-  my ($az, $el) = $self->azel();
+  my $az = $self->_cache_read( "AZ" );
+  if (!defined $az) {
+    ($az, my $el) = $self->azel();
+  }
   return $az->in_format( $opt{format} );
 }
 
@@ -579,7 +640,11 @@ If no telescope is defined the equator is used.
 sub el {
   my $self = shift;
   my %opt = @_;
-  my ($az, $el) = $self->azel();
+  my $el = $self->_cache_read( "EL" );
+
+  if (!defined $el) {
+    (my $az, $el) = $self->azel();
+  }
   return $el->in_format( $opt{format} );
 }
 
@@ -1021,8 +1086,11 @@ sub distance {
   my $self = shift;
   my $offset = shift;
 
-  Astro::SLA::slaDs2tp($offset->ra_app, $offset->dec_app,
-		       $self->ra_app, $self->dec_app,
+  my( $ra, $dec ) = $self->radec;
+  my( $ra_off, $dec_off ) = $offset->radec;
+
+  Astro::SLA::slaDs2tp($ra_off, $dec_off,
+		       $ra, $dec,
 		       my $xi, my $eta, my $j);
 
   return () unless $j == 0;
@@ -1069,8 +1137,13 @@ sub status {
     $string .= "Apparent dec:   " . $dec_app->string ."\n";
 
     # Transit time
-    $string .= "Time of next transit:" . $self->meridian_time->datetime ."\n";
-    $string .= "Transit El:     " . $self->transit_el(format=>'d')." deg\n";
+    my $mt = $self->meridian_time;
+    $string .= "Time of next transit: " . 
+      (defined $mt ? $mt->datetime : "<never>") ."\n";
+
+    my $t_el = $self->transit_el(format=>'d');
+    $string .= "Transit El:     " . (defined $t_el ? "$t_el deg"
+				     : "<undefined>") ."\n";
     my $ha_set = $self->ha_set( format => 'hour');
     $string .= "Hour Ang. (set):" . (defined $ha_set ? $ha_set : '??')." hrs\n";
 
@@ -1139,6 +1212,8 @@ will be Angle objects if no units are specified.
 Note that this method returns C<DateTime> objects if it was given C<DateTime>
 objects, else it returns C<Time::Piece> objects.
 
+After running, the original time associated with the object will be retained.
+
 =cut
 
 sub calculate {
@@ -1165,6 +1240,11 @@ sub calculate {
 
   my @data;
 
+  # Get the current datetime
+  my $original;
+  my $usenow = $self->usenow;
+  $original = $self->datetime() unless $usenow;
+
   # Get a private copy of the date object for calculations
   # (copy constructor)
   my $current = _clone_time( $opt{start} );
@@ -1183,18 +1263,32 @@ sub calculate {
     $self->datetime( $current );
 
     # Now calculate the positions
-    $timestep{elevation} = $self->el( format => $opt{units} );
-    $timestep{azimuth} = $self->az( format => $opt{units} );
-    $timestep{parang} = $self->pa( format => $opt{units} );
-    $timestep{lst}    = $self->_lst();
+    ($timestep{azimuth}, $timestep{elevation}) = $self->azel();
+    $timestep{parang} = $self->pa;
+
+    if (defined $opt{units} ) {
+      $timestep{azimuth} = $timestep{azimuth}->in_format( $opt{units} );
+      $timestep{elevation} = $timestep{elevation}->in_format( $opt{units} );
+      $timestep{parang} = $timestep{parang}->in_format( $opt{units} );
+    }
+
+    $timestep{lst} = $self->_lst();
 
     # store the timestep
     push(@data, \%timestep);
 
     # increment the time
-    $current += $inc;
+    $current = _inc_time( $current, $inc );
 
   }
+
+  # Restore the time
+  if ($usenow) {
+    $self->datetime( undef );
+  } else {
+    $self->datetime( $original );
+  }
+  $self->usenow( $usenow );
 
   return @data;
 
@@ -1202,12 +1296,12 @@ sub calculate {
 
 =item B<rise_time>
 
-Time at which the target will appear above the horizon. By default the calculation is for the next rise time relative to the current reference time. 
-If
-the "event" key is used, this can control which rise time will be
-returned. For event=1, this indicates the following rise (the default),
-event=-1 indicates a previous rise and event=0 indicates the nearest
-source rising to the current reference time.
+Time at which the target will appear above the horizon. By default the
+calculation is for the next rise time relative to the current
+reference time.  If the "event" key is used, this can control which
+rise time will be returned. For event=1, this indicates the following
+rise (the default), event=-1 indicates a previous rise and event=0
+indicates the nearest source rising to the current reference time.
 
 If the "nearest" key is set in the argument hash, this is synonymous
 with event=0 and supercedes the event key.
@@ -1345,7 +1439,7 @@ sub ha_set {
     ( cos($lat) * cos($dec) );
 
   # Make sure we have a valid number for the cosine
-  if (lc($self->name) eq 'moon' && abs($cos_ha0) > 1) {
+  if (defined $self->name && lc($self->name) eq 'moon' && abs($cos_ha0) > 1) {
     # for the moon this routine can incorrectly determine
     # cos HA near transit [in fact it always will be inaccurate
     # but near transit it won't return any value at all]
@@ -1374,7 +1468,8 @@ sub ha_set {
   # If we are the Sun we need to convert this to solar time
   # time from sidereal time
   $ha0 *= 365.2422/366.2422
-    unless (lc($self->name) eq 'sun' && $self->isa("Astro::Coords::Planet"));
+    unless (defined $self->name && 
+            lc($self->name) eq 'sun' && $self->isa("Astro::Coords::Planet"));
 
 
 #  print "HA 0 is $ha0\n";
@@ -1512,7 +1607,7 @@ sub _calc_mtime {
   # Need to make sure we lock onto the correct transit so I'm
   # wary of jumping forward by exactly 24 hours
   my $inc = 12 * $event;
-  $inc /= 2 if lc($self->name) eq 'moon';
+  $inc /= 2 if (defined $self->name && lc($self->name) eq 'moon');
 
   # Loop until mtime is greater than the reftime
   # and (mtime - prevtime) is smaller than a second
@@ -1596,7 +1691,8 @@ sub _local_mtcalc {
   # If we are not the Sun we need to convert this to sidereal
   # time from solar time
   $offset_sec *= 365.2422/366.2422
-    unless (lc($self->name) eq 'sun' && $self->isa("Astro::Coords::Planet"));
+    unless (defined $self->name &&
+            lc($self->name) eq 'sun' && $self->isa("Astro::Coords::Planet"));
 
   my $datetime = $self->datetime;
   if ($self->_isdt()) {
@@ -1760,18 +1856,21 @@ sub _set_vdefn {
 
 =item B<vframe>
 
-The velocity frame used to specify the radial velocity. This attribute is readonly
-and set during object construction. Abbreviations are used for the first 3 characters
-of the standard frames (4 to distinguish LSRK from LSRD):
+The velocity frame used to specify the radial velocity. This attribute
+is readonly and set during object construction. Abbreviations are used
+for the first 3 characters of the standard frames (4 to distinguish
+LSRK from LSRD):
 
   HEL  - Heliocentric (the Sun)
-  GEO  - Geocentric   (Centre of the Earth)
-  TOP  - Topocentric  (Surface of the Earth)
+  BAR  - Barycentric (the Solar System barycentre)
+  GEO  - Geocentric (Centre of the Earth)
+  TOP  - Topocentric (Surface of the Earth)
   LSR  - Kinematical Local Standard of Rest
   LSRK - As for LSR
   LSRD - Dynamical Local Standard of Rest
 
-The usual definition for star catalogues is Heliocentric. Default is Heliocentric.
+The usual definition for star catalogues is Heliocentric. Default is
+Heliocentric.
 
 =cut
 
@@ -1812,7 +1911,7 @@ sub obsvel {
 
   # Now we need to calculate the observer velocity in the
   # target frame
-  my $vobs = $self->vdiff( '', 'TOPO' );
+  my $vobs = $self->vdiff( '', 'TOP' );
 
   # Total velocity between observer and target
   my $vtotal = $vobs + $rv;
@@ -1904,7 +2003,7 @@ to report the difference in velocity between two arbitrary frames.
   $vd = $c->vdiff( 'HEL', 'LSRK' );
 
 Note that the velocity methods all report their velocity relative to the
-observer (ie topocentric correction), equivalent to specifiying 'TOPO'
+observer (ie topocentric correction), equivalent to specifiying 'TOP'
 as the second argument to vdiff.
 
 The two arguments are mandatory but if either are 'undef' they are converted
@@ -1937,6 +2036,7 @@ sub vdiff {
   $vel{TOP} = 0;
   $vel{GEO} = $self->verot();
   $vel{HEL} = $self->vhelio;
+  $vel{BAR} = $self->vbary;
   $vel{LSRK} = $self->vlsrk;
   $vel{LSRD} = $self->vlsrd;
   $vel{GAL}  = $self->vgalc;
@@ -1981,10 +2081,17 @@ Velocity component of the Earth's orbit in the direction of the target
 
   $vorb = $c->vorb;
 
+By default calculates the velocity component relative to the Sun.
+If an optional parameter is true, the calculation will be relative to
+the solary system barycentre.
+
+  $vorb = $c->vorb( $usebary );
+
 =cut
 
 sub vorb {
   my $self = shift;
+  my $usebary = shift;
 
   # Earth velocity (and position)
   my @vb = (0,0,0);
@@ -1993,14 +2100,17 @@ sub vorb {
   my @ph = (0,0,0);
   Astro::SLA::slaEvp($self->_mjd_tt(), 2000.0,@vb,@pb,@vh,@ph);
 
+  # Barycentric or heliocentric velocity?
+  my @v = ( $usebary ? @vb : @vh );
+
   # Convert spherical source coords to cartesian
   my ($ra, $dec) = $self->radec;
   my @cart = (0,0,0);
   Astro::SLA::slaDcs2c($ra,$dec,@cart);
 
   # Velocity due to Earth's orbit is scalar product of the star position
-  # with the Earth's heliocentric velocity
-  my $vorb = - Astro::SLA::slaDvdv(@cart,@vh)* AU2KM;
+  # with the Earth's velocity
+  my $vorb = - Astro::SLA::slaDvdv(@cart,@v)* AU2KM;
   return $vorb;
 }
 
@@ -2018,6 +2128,22 @@ Earth's rotation.
 sub vhelio {
   my $self = shift;
   return ($self->verot + $self->vorb);
+}
+
+=item B<vbary>
+
+Velocity of the observer with respect to the Solar System Barycentre in
+the direction of the target (ie the barycentric frame).  This is
+simply the sum of the component due to the Earth's orbit and the
+component due to the Earth's rotation.
+
+ $vhel = $c->vbary;
+
+=cut
+
+sub vbary {
+  my $self = shift;
+  return ($self->verot + $self->vorb(1));
 }
 
 =item B<vlsrk>
@@ -2106,6 +2232,8 @@ C<Astro::SLA::ut2lst> function with the correct args (and therefore
 does not need the MJD). It will need the longitude though so we
 calculate it here.
 
+No correction for DUT1 is applied.
+
 =cut
 
 sub _lst {
@@ -2116,11 +2244,18 @@ sub _lst {
   # Get the longitude (in radians)
   my $long = (defined $tel ? $tel->long : 0.0 );
 
+  # Seconds can be floating point.
+  my $sec = $time->sec;
+  if ($time->can("nanosecond")) {
+    $sec += 1E-9 * $time->nanosecond;
+  }
+
   # Return the first arg
   # Note that we guarantee a UT time representation
   my $lst = (Astro::SLA::ut2lst( $time->year, $time->mon,
 				 $time->mday, $time->hour,
-				 $time->min, $time->sec, $long))[0];
+				 $time->min, $sec, $long))[0];
+
   return new Astro::Coords::Angle::Hour( $lst, units => 'rad', range => '2PI');
 }
 
@@ -2154,10 +2289,45 @@ sub _clone_time {
   if (UNIVERSAL::isa($input, "Time::Piece")) {
     return Time::Piece::gmtime( $input->epoch );
   } elsif (UNIVERSAL::isa($input, "DateTime")) {
-    return DateTime->from_epoch( epoch => $input->epoch, 
-			         time_zone => 'UTC' );
+    # Use proper clone method
+    return $input->clone;
   }
   return;
+}
+
+=item B<_inc_time>
+
+Internal routine to increment the supplied time by the supplied
+number of seconds (either as an integer or the native duration class).
+
+  $date = _inc_time( $date, $seconds );
+
+Does return the date object since not all date objects can be modified inplace.
+Does not guarantee to return a new cloned object though.
+
+=cut
+
+sub _inc_time {
+  my $date = shift;
+  my $delta = shift;
+
+  # convert to integer seconds
+  $delta = $delta->seconds() if UNIVERSAL::can( $delta, "seconds" );
+
+  # Check for Time::Piece, else assume DateTime
+  if (UNIVERSAL::isa( $date, "Time::Piece" ) ) {
+    # can not add time in place
+    $date += $delta;
+  } else {
+    # increment the time (this happens in place)
+    if (abs($delta) > 1) {
+      $date->add( seconds => "$delta" );
+    } else {
+      $date->add( nanoseconds => ( $delta * 1E9 ) );
+    }
+  }
+
+  return $date;
 }
 
 =item B<_cmp_time>
@@ -2356,6 +2526,12 @@ sub _iterative_el {
   # See what type of date object we are dealing with
   my $use_dt = $self->_isdt();
 
+  # We are tweaking DateTime objects without the cache knowing about
+  # it (because it is faster than lots of object cloning) so we must
+  # turn off caching
+  my $old_unsafe = $self->datetime_is_unsafe;
+  $self->datetime_is_unsafe( 1 );
+
   # Calculate current elevation
   my $el = $self->el;
 
@@ -2380,7 +2556,7 @@ sub _iterative_el {
 
     # use 1 minute for all except the moon
     my $inc = 60; # seconds
-    $inc *= 10 if lc($self->name) eq 'moon';
+    $inc *= 10 if (defined $self->name && lc($self->name) eq 'moon');
 
     my $sign = ($el < $refel ? 1 : -1); # incrementing or decrementing time
     my $prevel; # previous elevation
@@ -2451,7 +2627,10 @@ sub _iterative_el {
 	  $reverse = 1 if ($diff_to_prev / $diff_to_curr < 0);
 	} else {
 	  # abort if the inc is too small
-	  return undef if $inc < $smallinc;
+	  if ($inc < $smallinc) {
+	    $self->datetime_is_unsafe( $old_unsafe );
+	    return undef;
+	  }
 
 	  # if we have not straddled, we reverse if the previous el
 	  # is closer than this el
@@ -2502,6 +2681,10 @@ sub _iterative_el {
     }
 
   }
+
+  # reset the unsafeness level
+  $self->datetime_is_unsafe( $old_unsafe );
+
   return 1;
 }
 
@@ -2609,7 +2792,7 @@ sub _normalise_vframe {
 
   # Verify
   croak "Unrecognized velocity frame '$trunc'"
-    unless $trunc =~ /^(GEO|TOP|HEL|LSR|GAL)/;
+    unless $trunc =~ /^(GEO|TOP|HEL|LSR|GAL|BAR)/;
 
   # special case
   $trunc = 'LSRK' if $trunc eq 'LSR';
@@ -2730,6 +2913,158 @@ sub _j2000_to_byyyy {
 
 =back
 
+=head2 Caching Routines
+
+These methods provide a means of caching calculated answers for a fixed
+epoch. It is usually faster to lookup a pre-calculated value for a given
+time than it is to calculate that time.
+
+The cache is per-object.
+
+=over 4
+
+=item B<_cache_write>
+
+Add the supplied values to the cache. Values can be provided in a hash.
+The choice of key names is up to the caller.
+
+  $c->_cache_write( AZ => $az, EL => $el );
+
+Nothing is stored if the date stored in the object is not fixed.
+
+=cut
+
+sub _cache_write {
+  my $self = shift;
+  my %add = @_;
+
+  my $primary = $self->_cache_key;
+  return () unless defined $primary;
+
+  my $C = $self->_cache_ref;
+
+  if (!exists $C->{$primary}) {
+    $C->{$primary} = {};
+  }
+
+  my $local = $C->{$primary};
+
+  for my $key (keys %add) {
+    $local->{$key} = $add{$key};
+  }
+  return;
+}
+
+=item B<_cache_read>
+
+Retrieve value(s) from the cache. Returns undef if no value is available.
+
+  ($az, $el) = $c->_cache_read( "AZ", "EL" );
+
+In scalar context, returns the first value.
+
+=cut
+
+sub _cache_read {
+  my $self = shift;
+  my @keys = @_;
+
+  my $primary = $self->_cache_key;
+  return () unless defined $primary;
+
+  my $C = $self->_cache_ref;
+
+  return () unless exists $C->{$primary};
+  my $local = $C->{$primary};
+  return () unless defined $local;
+
+  my @answer =  map { $local->{$_} } @keys;
+#  print "Caller: ". join(":", caller() ) ."\n";
+#  print "Getting cache values for ". join(":",@keys) ."\n";
+#  print "Getting cache values for ". join(":",@answer) ."\n";
+  return (wantarray() ? @answer : $answer[0] );
+}
+
+=item B<_calc_cache_key>
+
+Internal (to the cache system) function for calculating the cache
+key for the current epoch.
+
+  $key = $c->_calc_cache_key;
+
+Use the _cache_key() method to return the result.
+
+Caching is disabled if C<datetime_is_unsafe>, C<usenow> or no
+DateTime object is available.
+
+=cut
+
+sub _calc_cache_key {
+  my $self = shift;
+#  return; # This will disable caching
+
+  # if we have a floating clock we do not want to cache
+  if (!$self->has_datetime || $self->usenow || $self->datetime_is_unsafe) {
+    $self->_cache_key( undef );
+    return;
+  }
+
+  # The cache key currently uses the time and the telescope name
+  my $dt = $self->datetime;
+  my $tel = $self->telescope;
+  my $telName = (defined $tel ? $tel->name : "NONE" );
+
+  print "# Calculating cache key using $telName and ". $dt->epoch ."\n"
+    if $DEBUG;
+
+  # usually epoch is quicker to generate than ISO date but we have to
+  # be careful about fractional seconds in DateTime (Time::Piece can
+  # not do it)
+
+  my $addendum = "";
+  $addendum = $dt->nanosecond if $dt->can("nanosecond");
+
+  # Use date + telescope name as key
+  $self->_cache_key($telName . "_" . $dt->epoch. $addendum); 
+}
+
+=item B<_cache_key>
+
+Retrieve the current key suitable for caching results.
+The key should have been calculated using _calc_cache_key().
+Can be undef if caching is disabled.
+
+  $key = $c->_cache_key;
+
+=cut
+
+sub _cache_key {
+  my $self = shift;
+  if (@_) {
+    $self->{_CACHE_KEY} = shift;
+  }
+  return $self->{_CACHE_KEY};
+}
+
+=item B<_cache_ref>
+
+Returns reference to cache hash. Internal internal.
+
+=cut
+
+{
+  my $KEY = "__AC_CACHE";
+  sub _cache_ref {
+    my $self = shift;
+    if (!exists $self->{$KEY} ) {
+      $self->{$KEY} = {};
+    }
+    return $self->{$KEY};
+  }
+}
+
+=back
+
 =end __PRIVATE_METHODS__
 
 =head1 NOTES
@@ -2806,7 +3141,7 @@ All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
-Foundation; either version 2 of the License, or (at your option) any later
+Foundation; either version 3 of the License, or (at your option) any later
 version.
 
 This program is distributed in the hope that it will be useful,but WITHOUT ANY

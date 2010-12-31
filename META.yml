@@ -1,16 +1,55 @@
-# http://module-build.sourceforge.net/META-spec.html
-#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
-name:         Astro-Coords
-version:      0.10
-version_from: 
-installdirs:  site
+---
+abstract: 'Class for handling astronomical coordinates'
+author:
+  - 'Tim Jenness E<lt>tjenness@cpan.orgE<gt>'
+build_requires:
+  Test::More: 0
+configure_requires:
+  Module::Build: 0.36
+generated_by: 'Module::Build version 0.3607'
+license: gpl
+meta-spec:
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+name: Astro-Coords
+provides:
+  Astro::Coords:
+    file: lib/Astro/Coords.pm
+    version: 0.12
+  Astro::Coords::Angle:
+    file: lib/Astro/Coords/Angle.pm
+    version: 0.01
+  Astro::Coords::Angle::Hour:
+    file: lib/Astro/Coords/Angle/Hour.pm
+    version: 0.01
+  Astro::Coords::Calibration:
+    file: lib/Astro/Coords/Calibration.pm
+    version: 0.03
+  Astro::Coords::Elements:
+    file: lib/Astro/Coords/Elements.pm
+    version: 0.04
+  Astro::Coords::Equatorial:
+    file: lib/Astro/Coords/Equatorial.pm
+    version: 0.04
+  Astro::Coords::Fixed:
+    file: lib/Astro/Coords/Fixed.pm
+    version: 0.03
+  Astro::Coords::Interpolated:
+    file: lib/Astro/Coords/Interpolated.pm
+    version: 0.02
+  Astro::Coords::Offset:
+    file: lib/Astro/Coords/Offset.pm
+    version: 0.01
+  Astro::Coords::Planet:
+    file: lib/Astro/Coords/Planet.pm
+    version: 0.03
 requires:
-    Astro::SLA:                    0.95
-    Astro::Telescope:              0.50
-    DateTime:                      0
-    Scalar::Util:                  1.13
-    Test::More:                    0
-    Time::Piece:                   1.02
-
-distribution_type: module
-generated_by: ExtUtils::MakeMaker version 6.17
+  Astro::SLA: 0.95
+  Astro::Telescope: 0.6
+  DateTime: 0
+  Scalar::Util: 1.13
+  Time::Piece: 1.02
+resources:
+  license: http://opensource.org/licenses/gpl-license.php
+  repository: git://github.com/timj/perl-Astro-Coords.git
+version: 0.12
