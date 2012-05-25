@@ -36,7 +36,7 @@ This class is used by C<Astro::Coords> for handling coordinates
 specified in a fixed astronomical coordinate frame.
 
 You are not expected to use this class directly, the C<Astro::Coords>
-class should be used for all access (the C<Astro::Coords> constructor 
+class should be used for all access (the C<Astro::Coords> constructor
 is treated as a factory constructor).
 
 If proper motions and parallax information are supplied with a
@@ -52,9 +52,9 @@ use warnings;
 use warnings::register;
 use Carp;
 
-our $VERSION = '0.04';
+our $VERSION = '0.06';
 
-use Astro::SLA ();
+use Astro::PAL ();
 use base qw/ Astro::Coords /;
 
 use overload '""' => "stringify", fallback => 1;
@@ -185,7 +185,7 @@ sub new {
 
 # Wind the RA/Dec to J2000 if the equinox isn't 2000.
     if( $equinox != 2000 ) {
-      Astro::SLA::slaPreces( 'FK5', $equinox, '2000.0', $ra, $dec );
+      ($ra, $dec) = Astro::PAL::palPreces( 'FK5', $equinox, '2000.0', $ra, $dec );
     }
 
 # Get the epoch. If it's not given (in $args{epoch}) then it's
@@ -201,18 +201,14 @@ sub new {
       # Assume we are HEL without checking
       my $rv = ( exists $args{rv} && $args{rv} ? $args{rv} : 0);
 
-      my ( $ra0, $dec0 );
-      Astro::SLA::slaPm( $ra, $dec,
-                         Astro::SLA::DAS2R * $pm1,
-                         Astro::SLA::DAS2R * $pm2,
-                         Astro::SLA::DAS2R * $parallax,
-			 $rv,
-                         $epoch, # input epoch
-			 2000.0, # output epoch
-                         $ra0,
-                         $dec0 );
-      $ra = $ra0;
-      $dec = $dec0;
+      ( $ra, $dec ) = Astro::PAL::palPm( $ra, $dec,
+                                         Astro::PAL::DAS2R * $pm1,
+                                         Astro::PAL::DAS2R * $pm2,
+                                         $parallax,
+                                         $rv,
+                                         $epoch, # input epoch
+                                         2000.0, # output epoch
+                                       );
     }
 
   } elsif ($args{type} =~ /^b([0-9\.]+)/i) {
@@ -240,59 +236,46 @@ sub new {
       my $rv = ( exists $args{rv} && $args{rv} ? $args{rv} : 0);
 
       # We are converting to J2000 but we need to convert that to Besselian epoch
-      Astro::SLA::slaPm( $ra, $dec,
-                         Astro::SLA::DAS2R * $pm1,
-                         Astro::SLA::DAS2R * $pm2,
-                         Astro::SLA::DAS2R * $parallax,
-                         $rv,
-                         $epoch,
-                         Astro::SLA::slaEpco('B','J',2000.0), # Besselian epoch
-                         $ra0,
-                         $dec0 );
-      $ra = $ra0;
-      $dec = $dec0;
+      ($ra, $dec) = Astro::PAL::palPm( $ra, $dec,
+                                       Astro::PAL::DAS2R * $pm1,
+                                       Astro::PAL::DAS2R * $pm2,
+                                       $parallax,
+                                       $rv,
+                                       $epoch,
+                                       Astro::PAL::palEpco('B','J',2000.0), # Besselian epoch
+                                     );
     }
 
     if( $equinox != 1950 ) {
 
 # Remove the E-terms for the specified Besselian equinox
-      my ( $ra0, $dec0 );
-      Astro::SLA::slaSubet( $ra, $dec, $equinox, $ra0, $dec0 );
-      $ra = $ra0;
-      $dec = $dec0;
+      ($ra, $dec) = Astro::PAL::palSubet( $ra, $dec, $equinox );
 
 # Wind the RA/Dec to B1950 if the equinox isn't 1950.
-      Astro::SLA::slaPreces( 'FK4', $equinox, 1950.0, $ra, $dec );
+      ($ra, $dec) = Astro::PAL::palPreces( 'FK4', $equinox, 1950.0, $ra, $dec );
 
 # Add the E-terms back in.
-      Astro::SLA::slaAddet( $ra, $dec, 1950.0, $ra0, $dec0 );
-      $ra = $ra0;
-      $dec = $dec0;
+      ($ra, $dec) = Astro::PAL::palAddet( $ra, $dec, 1950.0 );
     }
 
 # Convert to J2000, no proper motion. We need the epoch at which the
 # coordinate was valid
-    Astro::SLA::slaFk45z($ra, $dec,
-			 $epoch,
-                         $ra0, $dec0
-                        );
-    $ra = $ra0;
-    $dec = $dec0;
+    ($ra, $dec) = Astro::PAL::palFk45z($ra, $dec, $epoch );
 
-  } elsif ($args{type} eq "GALACTIC") {
+  } elsif ($args{type} =~ /^gal/i) {
     $native = 'glonglat';
     return undef unless exists $args{long} and exists $args{lat};
     return undef unless defined $args{long} and defined $args{lat};
 
-    Astro::SLA::slaGaleq( $args{long}, $args{lat}, $ra, $dec);
+    ($ra, $dec) = Astro::PAL::palGaleq( $args{long}, $args{lat} );
 
-  } elsif ($args{type} eq "SUPERGALACTIC") {
+  } elsif ($args{type} =~ /^supergal/i) {
     return undef unless exists $args{long} and exists $args{lat};
     return undef unless defined $args{long} and defined $args{lat};
 
     $native = 'sglonglat';
-    Astro::SLA::slaSupgal( $args{long}, $args{lat}, my $glong, my $glat);
-    Astro::SLA::slaGaleq( $glong, $glat, $ra, $dec);
+    my ($glong, $glat) = Astro::PAL::palSupgal( $args{long}, $args{lat});
+    ($ra, $dec) = Astro::PAL::palGaleq( $glong, $glat );
 
   } else {
     my $type = (defined $args{type} ? $args{type} : "<undef>");
@@ -360,7 +343,7 @@ sub radec {
   my ($sys, $equ) = $self->_parse_equinox( shift || 'J2000' );
 
   # If we have proper motions we need to take them into account
-  # Do this using slaPm rather than via the base class since it
+  # Do this using palPm rather than via the base class since it
   # must be more efficient than going through apparent
   my @pm = $self->pm;
   my $par = $self->parallax;
@@ -378,15 +361,15 @@ sub radec {
     # Radial velocity in HEL frame
     # Note that we need to calculate the RA/Dec to get the HEL frame
     # if the radial velocity is not already in HEL
-    # We have to ignore it for now and only use rv if it is 
+    # We have to ignore it for now and only use rv if it is
     # already heliocentric
     my $rv = 0;
     $rv = $self->rv if $self->vframe eq 'HEL';
 
     # Correct for proper motion
-    Astro::SLA::slaPm( $ra, $dec, Astro::SLA::DAS2R * $pm[0], 
-		       Astro::SLA::DAS2R * $pm[1], $par, $rv, 2000.0,
-		       Astro::SLA::slaEpj($self->_mjd_tt), $ra, $dec );
+    ($ra, $dec) = Astro::PAL::palPm( $ra, $dec, Astro::PAL::DAS2R * $pm[0],
+                                     Astro::PAL::DAS2R * $pm[1], $par, $rv, 2000.0,
+                                     Astro::PAL::palEpj($self->_mjd_tt));
 
     # Convert to Angle objects
     $ra = new Astro::Coords::Angle::Hour( $ra, units => 'rad', range => '2PI');
@@ -398,7 +381,7 @@ sub radec {
     # Already have the right answer
   } elsif ($sys eq 'FK5') {
     # Preces to new equinox
-    Astro::SLA::slaPreces( 'FK5', 2000.0, $equ, $ra, $dec );
+    ($ra, $dec) = Astro::PAL::palPreces( 'FK5', 2000.0, $equ, $ra, $dec );
 
   } else {
     # Convert to BYYYY
@@ -625,15 +608,9 @@ sub apparent {
       $rv = $self->rv if $self->vframe eq 'HEL';
     }
 
-    Astro::SLA::slaMap( $ra, $dec,
-			Astro::SLA::DAS2R * $pm[0],
-			Astro::SLA::DAS2R * $pm[1], $par, $rv, 2000.0, $mjd,
-			$ra_app, $dec_app);
-
-    # Convert from observed to apparent place
-    #  Astro::SLA::slaOap("r", $ra_app, $dec_app, $mjd, 0.0, $long, $lat,
-    #                     0.0,0.0,0.0,
-    #                     0.0,0.0,0.0,0.0,0.0,$ra, $dec);
+    ($ra_app, $dec_app) = Astro::PAL::palMap( $ra, $dec,
+                                              Astro::PAL::DAS2R * $pm[0],
+                                              Astro::PAL::DAS2R * $pm[1], $par, $rv, 2000.0, $mjd );
 
     $ra_app = new Astro::Coords::Angle::Hour($ra_app, units => 'rad', range => '2PI');
     $dec_app = new Astro::Coords::Angle($dec_app, units => 'rad');
@@ -737,7 +714,7 @@ Usually called via C<Astro::Coords>.
 
 =head1 REQUIREMENTS
 
-C<Astro::SLA> is used for all internal astrometric calculations.
+C<Astro::PAL> is used for all internal astrometric calculations.
 
 =head1 AUTHOR
 

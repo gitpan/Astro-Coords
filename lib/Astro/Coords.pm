@@ -108,10 +108,10 @@ use Carp;
 use vars qw/ $DEBUG /;
 $DEBUG = 0;
 
-our $VERSION = '0.12';
+our $VERSION = '0.13';
 
 use Math::Trig qw/ acos /;
-use Astro::SLA ();
+use Astro::PAL ();
 use Astro::Coords::Angle;
 use Astro::Coords::Angle::Hour;
 use Astro::Coords::Equatorial;
@@ -128,13 +128,13 @@ use Time::Piece;
 # Constants for Sun rise/set and twilight definitions
 # Elevation in radians
 # See http://aa.usno.navy.mil/faq/docs/RST_defs.html
-use constant SUN_RISE_SET => ( - (50 * 60) * Astro::SLA::DAS2R); # 50 arcmin
-use constant CIVIL_TWILIGHT => ( - (6 * 3600) * Astro::SLA::DAS2R); # 6 deg
-use constant NAUT_TWILIGHT => ( - (12 * 3600) * Astro::SLA::DAS2R); # 12 deg
-use constant AST_TWILIGHT => ( - (18 * 3600) * Astro::SLA::DAS2R); # 18 deg
+use constant SUN_RISE_SET => ( - (50 * 60) * Astro::PAL::DAS2R); # 50 arcmin
+use constant CIVIL_TWILIGHT => ( - (6 * 3600) * Astro::PAL::DAS2R); # 6 deg
+use constant NAUT_TWILIGHT => ( - (12 * 3600) * Astro::PAL::DAS2R); # 12 deg
+use constant AST_TWILIGHT => ( - (18 * 3600) * Astro::PAL::DAS2R); # 18 deg
 
 # This is a fudge. Not accurate
-use constant MOON_RISE_SET => ( 5 * 60 * Astro::SLA::DAS2R);
+use constant MOON_RISE_SET => ( 5 * 60 * Astro::PAL::DAS2R);
 
 # Number of km in one Astronomical Unit
 use constant AU2KM => 149.59787066e6;
@@ -174,13 +174,13 @@ Orbital elements as:
   $c = new Astro::Coords( elements => \@array );
 
 where C<%elements> must contain the names of the elements
-as used in the SLALIB routine slaPlante, and @array is the
+as used in the PAL routine palPlante, and @array is the
 contents of the array returned by calling the array() method
 on another Elements object.
 
 Fixed astronomical oordinate frames can be specified using:
 
-  $c = new Astro::Coords( ra => 
+  $c = new Astro::Coords( ra =>
                           dec =>
 			  long =>
 			  lat =>
@@ -314,7 +314,7 @@ This method checks that the argument is of the correct type.
 
 sub telescope {
   my $self = shift;
-  if (@_) { 
+  if (@_) {
     my $tel = shift;
     return undef unless UNIVERSAL::isa($tel, "Astro::Telescope");
     $self->{Telescope} = $tel;
@@ -517,7 +517,7 @@ sub azel {
     my $dec = $self->dec_app;
     my $tel = $self->telescope;
     my $lat = ( defined $tel ? $tel->lat : 0.0);
-    Astro::SLA::slaDe2h( $ha, $dec, $lat, $az, $el );
+    ($az, $el) = Astro::PAL::palDe2h( $ha, $dec, $lat );
     $az = new Astro::Coords::Angle( $az, units => 'rad', range => '2PI' );
     $el = new Astro::Coords::Angle( $el, units => 'rad' );
 
@@ -599,6 +599,7 @@ sub ha {
     $ha = $self->_lst - $self->ra_app;
     # Always normalize?
     $ha = new Astro::Coords::Angle::Hour( $ha, units => 'rad', range => 'PI' );
+    $self->_cache_write( "HA" => $ha );
   }
   return $ha->in_format( $opt{format} );
 }
@@ -662,8 +663,8 @@ Value determined from the current elevation.
 sub airmass {
   my $self = shift;
   my $el = $self->el;
-  my $zd = Astro::SLA::DPIBY2 - $el;
-  return Astro::SLA::slaAirmas( $zd );
+  my $zd = Astro::PAL::DPIBY2 - $el;
+  return Astro::PAL::palAirmas( $zd );
 }
 
 =item B<radec>
@@ -684,10 +685,10 @@ sub radec {
   my ($rm, $dm);
   if ($sys eq 'FK5') {
     # Julian epoch
-    Astro::SLA::slaAmp($ra_app, $dec_app, $mjd, $equ, $rm, $dm);
+    ($rm, $dm) = Astro::PAL::palAmp($ra_app, $dec_app, $mjd, $equ);
   } elsif ($sys eq 'FK4') {
     # Convert to J2000 and then convert to Besselian epoch
-    Astro::SLA::slaAmp($ra_app, $dec_app, $mjd, 2000.0, $rm, $dm);
+    ($rm, $dm) = Astro::PAL::palAmp($ra_app, $dec_app, $mjd, 2000.0);
 
     ($rm, $dm) = $self->_j2000_to_byyyy( $equ, $rm, $dm);
   }
@@ -844,7 +845,7 @@ Answer is returned as two C<Astro::Coords::Angle> objects.
 sub glonglat {
   my $self = shift;
   my ($ra,$dec) = $self->radec;
-  Astro::SLA::slaEqgal( $ra, $dec, my $long, my $lat );
+  my ($long, $lat) = Astro::PAL::palEqgal( $ra, $dec );
   return (new Astro::Coords::Angle($long, units => 'rad', range => '2PI'),
 	  new Astro::Coords::Angle($lat, units => 'rad'));
 }
@@ -862,7 +863,7 @@ Answer is returned as two C<Astro::Coords::Angle> objects.
 sub sglonglat {
   my $self = shift;
   my ($glong, $glat) = $self->glonglat();
-  Astro::SLA::slaGalsup( $glong, $glat, my $sglong, my $sglat);
+  my ($sglong, $sglat) = Astro::PAL::palGalsup( $glong, $glat );
   return (new Astro::Coords::Angle($sglong, units => 'rad', range => '2PI'),
 	  new Astro::Coords::Angle($sglat, units => 'rad'));
 }
@@ -882,7 +883,7 @@ Answer is returned as two C<Astro::Coords::Angle> objects.
 sub ecllonglat {
   my $self = shift;
   my ($ra, $dec) = $self->radec;
-  Astro::SLA::slaEqecl( $ra, $dec, $self->_mjd_tt, my $long, my $lat );
+  my ($long, $lat) = Astro::PAL::palEqecl( $ra, $dec, $self->_mjd_tt );
   return (new Astro::Coords::Angle($long, units => 'rad', range => '2PI'),
 	  new Astro::Coords::Angle($lat, units => 'rad'));
 }
@@ -949,9 +950,7 @@ sub radec1950 {
   my ($ra, $dec) = $self->radec;
 
   # No E-terms or precession since we are going to B1950 epoch 1950
-  Astro::SLA::slaFk54z($ra,$dec,1950.0,my $r1950, 
-		       my $d1950, my $dr1950, my $dd1950);
-
+  my ($r1950, $d1950, $dr1950, $dd1950) = Astro::PAL::palFk54z($ra,$dec,1950.0);
   return (new Astro::Coords::Angle::Hour( $r1950, units => 'rad', range => '2PI'),
 	  new Astro::Coords::Angle( $d1950, units => 'rad' ));
 }
@@ -976,7 +975,7 @@ sub pa {
   my $dec = $self->dec_app;
   my $tel = $self->telescope;
   my $lat = ( defined $tel ? $tel->lat : 0.0);
-  my $pa = Astro::SLA::slaPa($ha, $dec, $lat);
+  my $pa = Astro::PAL::palPa($ha, $dec, $lat);
   $pa = new Astro::Coords::Angle( $pa, units => 'rad' );
   return $pa->in_format( $opt{format} );
 }
@@ -1089,9 +1088,8 @@ sub distance {
   my( $ra, $dec ) = $self->radec;
   my( $ra_off, $dec_off ) = $offset->radec;
 
-  Astro::SLA::slaDs2tp($ra_off, $dec_off,
-		       $ra, $dec,
-		       my $xi, my $eta, my $j);
+  my ($xi, $eta, $j) = Astro::PAL::palDs2tp($ra_off, $dec_off,
+                                            $ra, $dec );
 
   return () unless $j == 0;
 
@@ -1138,7 +1136,7 @@ sub status {
 
     # Transit time
     my $mt = $self->meridian_time;
-    $string .= "Time of next transit: " . 
+    $string .= "Time of next transit: " .
       (defined $mt ? $mt->datetime : "<never>") ."\n";
 
     my $t_el = $self->transit_el(format=>'d');
@@ -1198,7 +1196,7 @@ gap exactly. None of the returned times will exceed the end time. The
 increment must be greater than zero but the start and end times can be
 identical.
 
-Returns an array of hashes. Each hash contains 
+Returns an array of hashes. Each hash contains
 
   time [same object class as provided as argument]
   elevation
@@ -1235,7 +1233,7 @@ sub calculate {
   # Determine date class to use for calculations
   my $dateclass = blessed( $opt{start} );
   croak "Start time must be either Time::Piece or DateTime object"
-    if (!$dateclass || 
+    if (!$dateclass ||
 	($dateclass ne "Time::Piece" && $dateclass ne 'DateTime' ));
 
   my @data;
@@ -1455,7 +1453,7 @@ sub ha_set {
       my $convok = $self->_iterative_el( $horizon, -1 );
       return undef unless $convok;
       my $seconds = $self->datetime->epoch - $mt->epoch;
-      $cos_ha0 = cos( $seconds * Astro::SLA::DS2R );
+      $cos_ha0 = cos( $seconds * Astro::PAL::DS2R );
       $self->datetime( $oldtime );
     }
   }
@@ -1468,12 +1466,12 @@ sub ha_set {
   # If we are the Sun we need to convert this to solar time
   # time from sidereal time
   $ha0 *= 365.2422/366.2422
-    unless (defined $self->name && 
+    unless (defined $self->name &&
             lc($self->name) eq 'sun' && $self->isa("Astro::Coords::Planet"));
 
 
 #  print "HA 0 is $ha0\n";
-#  print "#### in hours: ". ( $ha0 * Astro::SLA::DR2S / 3600)."\n";
+#  print "#### in hours: ". ( $ha0 * Astro::PAL::DR2S / 3600)."\n";
 
   # return the result (converting if necessary)
   return Astro::Coords::Angle::Hour->new( $ha0, units => 'rad',
@@ -1492,7 +1490,7 @@ By default the next transit following the current time is calculated and
 returned as a C<Time::Piece> or C<DateTime> object (depending on what
 is stored in C<datetime>).
 
-If you want control over which transit should be calculated this can be 
+If you want control over which transit should be calculated this can be
 specified using the "event" hash key:
 
   $mt = $c->meridian_time( event => 1 );
@@ -1664,7 +1662,7 @@ sub _calc_mtime {
   return $mtime;
 }
 
-# Returns true if 
+# Returns true if
 #    time - reftime is negative
 
 # Returns RA-LST added on to reference time
@@ -1676,12 +1674,12 @@ sub _local_mtcalc {
   # match the actual time stored in the object.
   # Make sure the LST and Apparent RA are -PI to +PI
   # so that we do not jump whole days
-  my $lst = Astro::SLA::slaDrange($self->_lst);
-  my $ra_app = Astro::SLA::slaDrange( $self->ra_app );
+  my $lst = Astro::PAL::palDrange($self->_lst);
+  my $ra_app = Astro::PAL::palDrange( $self->ra_app );
   my $offset = $ra_app - $lst;
 
   # This is in radians. Need to convert it to seconds
-  my $offset_sec = $offset * Astro::SLA::DR2S;
+  my $offset_sec = $offset * Astro::PAL::DR2S;
 
 #  print "LST:            $lst\n";
 #  print "RA App:         ". $self->ra_app ."\n";
@@ -1740,6 +1738,76 @@ sub transit_el {
   $self->datetime( $cache );
 
   return $el;
+}
+
+=item B<apply_offset>
+
+Applies the offsets of an C<Astro::Coords::Offset> object.
+
+  my $coords_offset = $coords->apply_offset($offset);
+
+The current implementation works by calling C<radec2000> or C<glonglat>
+on the original object and will return a new C<Astro::Coords::Equatorial>
+object.
+
+=cut
+
+sub apply_offset {
+  my $self   = shift;
+  my $offset = shift;
+
+  # Check that the current implementation can handle the situation.
+
+  croak 'apply_offet: argument should be an Astro::Coords::Offset object'
+    unless UNIVERSAL::isa($offset, 'Astro::Coords::Offset');
+
+  croak 'apply_offset: can only use TAN projection'
+    unless $offset->projection() eq 'TAN';
+
+  my $coordsoffset = undef;
+
+  if ($offset->system() eq 'J2000') {
+    # Apply offsets to J2000 coordinates and create a new object from them.
+
+    my ($dra, $ddec) = map {$_->radians()} $offset->offsets_rotated();
+
+    my ($ra, $dec) = Astro::PAL::palDtp2s($dra, $ddec,
+                       map {$_->radians()} $self->radec2000());
+
+    $coordsoffset = new Astro::Coords(type  => 'J2000',
+                                      ra    => $ra,
+                                      dec   => $dec,
+                                      units => 'radians');
+  }
+  elsif ($offset->system() eq 'GAL') {
+    # Apply offsets to galactic coordinates and create a new object from them.
+
+    my ($dlon, $dlat) = map {$_->radians()} $offset->offsets_rotated();
+
+    my ($lon, $lat) = Astro::PAL::palDtp2s($dlon, $dlat,
+                       map {$_->radians()} $self->glonglat());
+
+    $coordsoffset = new Astro::Coords(type  => 'GAL',
+                                      long  => $lon,
+                                      lat   => $lat,
+                                      units => 'radians');
+  }
+  else {
+    croak 'apply_offset: can only use J2000 or GAL system';
+  }
+
+  croak 'apply_offset: failed to create object' unless defined $coordsoffset;
+
+  # Copy across additional data.
+
+  foreach my $method (qw/name telescope datetime comment/) {
+    my $value = $self->$method();
+    next unless defined $value;
+    next if $method eq 'comment' && $value eq '';
+    $coordsoffset->$method($value);
+  }
+
+  return $coordsoffset;
 }
 
 =back
@@ -1932,7 +2000,7 @@ method).
 
 Default definitions and frames will be used if none were specified.
 
-The doppler factors (defined as  frequency/rest frequency or 
+The doppler factors (defined as  frequency/rest frequency or
 rest wavelength / wavelength) are calculated as follows:
 
  RADIO:    1 - v / c
@@ -2009,7 +2077,7 @@ as the second argument to vdiff.
 The two arguments are mandatory but if either are 'undef' they are converted
 to the target velocity frame (see C<vdefn> method).
 
-The second example is simply equivalent to 
+The second example is simply equivalent to
 
   $vd = $c->vhelio - $c->vlsrk;
 
@@ -2071,7 +2139,7 @@ sub verot {
   # apparent ra dec
   my ($ra, $dec) = $self->apparent();
 
-  return Astro::SLA::slaRverot( $lat, $ra, $dec, $lst );
+  return Astro::PAL::palRverot( $lat, $ra, $dec, $lst );
 }
 
 =item B<vorb>
@@ -2094,23 +2162,18 @@ sub vorb {
   my $usebary = shift;
 
   # Earth velocity (and position)
-  my @vb = (0,0,0);
-  my @pb = (0,0,0);
-  my @vh = (0,0,0);
-  my @ph = (0,0,0);
-  Astro::SLA::slaEvp($self->_mjd_tt(), 2000.0,@vb,@pb,@vh,@ph);
+  my ($vbr,$pbr,$vhr,$phr) = Astro::PAL::palEvp($self->_mjd_tt(), 2000.0);
 
   # Barycentric or heliocentric velocity?
-  my @v = ( $usebary ? @vb : @vh );
+  my @v = ( $usebary ? @$vbr : @$vhr );
 
   # Convert spherical source coords to cartesian
   my ($ra, $dec) = $self->radec;
-  my @cart = (0,0,0);
-  Astro::SLA::slaDcs2c($ra,$dec,@cart);
+  my @cart = Astro::PAL::palDcs2c($ra,$dec);
 
   # Velocity due to Earth's orbit is scalar product of the star position
   # with the Earth's velocity
-  my $vorb = - Astro::SLA::slaDvdv(@cart,@v)* AU2KM;
+  my $vorb = - Astro::PAL::palDvdv(\@cart,\@v)* AU2KM;
   return $vorb;
 }
 
@@ -2158,7 +2221,7 @@ of Rest in the direction of the target.
 sub vlsrk {
   my $self = shift;
   my ($ra, $dec) = $self->radec;
-  return (Astro::SLA::slaRvlsrk( $ra, $dec ) + $self->vhelio);
+  return (Astro::PAL::palRvlsrk( $ra, $dec ) + $self->vhelio);
 }
 
 =item B<vlsrd>
@@ -2173,7 +2236,7 @@ of Rest in the direction of the target.
 sub vlsrd {
   my $self = shift;
   my ($ra, $dec) = $self->radec;
-  return (Astro::SLA::slaRvlsrd( $ra, $dec ) + $self->vhelio);
+  return (Astro::PAL::palRvlsrd( $ra, $dec ) + $self->vhelio);
 }
 
 =item B<vgalc>
@@ -2188,10 +2251,10 @@ in the direction of the target.
 sub vgalc {
   my $self = shift;
   my ($ra, $dec) = $self->radec;
-  return (Astro::SLA::slaRvgalc( $ra, $dec ) + $self->vlsrd);
+  return (Astro::PAL::palRvgalc( $ra, $dec ) + $self->vlsrd);
 }
 
-=item B<vgalc>
+=item B<vlg>
 
 Velocity of the observer with respect to the Local Group in the
 direction of the target.
@@ -2203,7 +2266,7 @@ direction of the target.
 sub vlg {
   my $self = shift;
   my ($ra, $dec) = $self->radec;
-  return (Astro::SLA::slaRvlg( $ra, $dec ) + $self->vhelio);
+  return (Astro::PAL::palRvlg( $ra, $dec ) + $self->vhelio);
 }
 
 =back
@@ -2228,7 +2291,7 @@ If no telescope is defined the LST will be from Greenwich.
 This is labelled as an internal routine since it is not clear whether
 the method to determine LST should be here or simply placed into
 C<DateTime>. In practice this simply calls the
-C<Astro::SLA::ut2lst> function with the correct args (and therefore
+C<Astro::PAL::ut2lst> function with the correct args (and therefore
 does not need the MJD). It will need the longitude though so we
 calculate it here.
 
@@ -2238,6 +2301,10 @@ No correction for DUT1 is applied.
 
 sub _lst {
   my $self = shift;
+
+  my $cachedlst = $self->_cache_read_global_lst();
+  return $cachedlst if defined $cachedlst;
+
   my $time = $self->datetime;
   my $tel = $self->telescope;
 
@@ -2252,11 +2319,15 @@ sub _lst {
 
   # Return the first arg
   # Note that we guarantee a UT time representation
-  my $lst = (Astro::SLA::ut2lst( $time->year, $time->mon,
+  my $lst = (Astro::PAL::ut2lst( $time->year, $time->mon,
 				 $time->mday, $time->hour,
 				 $time->min, $sec, $long))[0];
 
-  return new Astro::Coords::Angle::Hour( $lst, units => 'rad', range => '2PI');
+  my $lstobject = new Astro::Coords::Angle::Hour( $lst, units => 'rad', range => '2PI');
+
+  $self->_cache_write_global_lst($lstobject);
+
+  return $lstobject;
 }
 
 =item B<_mjd_tt>
@@ -2268,7 +2339,7 @@ Internal routine to retrieve the MJD in TT (Terrestrial time) rather than UTC ti
 sub _mjd_tt {
   my $self = shift;
   my $mjd = $self->datetime->mjd;
-  my $offset = Astro::SLA::slaDtt( $mjd );
+  my $offset = Astro::PAL::palDtt( $mjd );
   $mjd += ($offset / (86_400));
   return $mjd;
 }
@@ -2398,7 +2469,7 @@ sub _rise_set_time {
   my $event = $self->_extract_event( %opt );
 
   # and convert to seconds
-  $ha_set *= Astro::SLA::DR2S;
+  $ha_set *= Astro::PAL::DR2S;
 
   # and thence to a duration if required
   if ($self->_isdt()) {
@@ -2460,7 +2531,7 @@ sub _rise_set_time {
   my $event_time;
   if ($event == -1) {
     # We want the nearest time that is earlier than reference time
-    # Start from the end and jump out when 
+    # Start from the end and jump out when
     for my $t (reverse @times) {
       if ($t->epoch <= $reftime->epoch) {
 	$event_time = $t;
@@ -2536,7 +2607,7 @@ sub _iterative_el {
   my $el = $self->el;
 
   # Tolerance (in arcseconds)
-  my $tol = 5 * Astro::SLA::DAS2R;
+  my $tol = 5 * Astro::PAL::DAS2R;
 
   # smallest support increment
   my $smallinc = 0.2;
@@ -2549,7 +2620,7 @@ sub _iterative_el {
   if (abs($el - $refel) > $tol ) {
     if ($DEBUG) {
       print "# ================================ -> ".$self->name."\n";
-      print "# Requested elevation: " . (Astro::SLA::DR2D * $refel) ."\n";
+      print "# Requested elevation: " . (Astro::PAL::DR2D * $refel) ."\n";
       print "# Elevation out of range: ". $self->el(format => 'deg')."\n";
       print "# For " . ($grad > 0 ? "rise" : "set")." time: ". $time->datetime ."\n";
     }
@@ -2623,7 +2694,7 @@ sub _iterative_el {
 	  # we can abort if we are below the time resolution
 	  last if $inc < $smallinc;
 
-	  # reverse 
+	  # reverse
 	  $reverse = 1 if ($diff_to_prev / $diff_to_curr < 0);
 	} else {
 	  # abort if the inc is too small
@@ -2706,7 +2777,7 @@ sub _isdt {
 
   $test = $self->datetime unless defined $test;
 
-  # Check Time::Piece first since there is a possibility that 
+  # Check Time::Piece first since there is a possibility that
   # this is really a subclass of DateTime
   my $dtime;
   if ($test->isa( "Time::Piece")) {
@@ -2888,24 +2959,23 @@ sub _j2000_to_byyyy {
   my ($equ, $ra2000, $dec2000) = @_;
 
   # First to 1950
-  Astro::SLA::slaFk54z($ra2000, $dec2000, 
-		       Astro::SLA::slaEpb( $self->_mjd_tt ),
-		       my $rb, my $db, my $drb, my $drd);
+  my ($rb, $db, $drb, $drd) = Astro::PAL::palFk54z($ra2000, $dec2000,
+                                                   Astro::PAL::palEpb( $self->_mjd_tt ) );
 
   # Then preces to reference epoch frame
   # I do not know whether fictitious proper motions should be included
-  # here with slaPm or whether it is enough to use non-1950 epoch
-  # in slaFk54z and then preces 1950 to the same epoch. Not enough test
+  # here with palPm or whether it is enough to use non-1950 epoch
+  # in palFk54z and then preces 1950 to the same epoch. Not enough test
   # data for this rare case.
   if ($equ != 1950) {
     # Add E-terms
-    Astro::SLA::slaSubet( $rb, $db, 1950.0, my $rnoe, my $dnoe);
+    my ($rnoe, $dnoe) = Astro::PAL::palSubet( $rb, $db, 1950.0 );
 
     # preces
-    Astro::SLA::slaPreces( 'FK4', 1950, $equ, $rnoe, $dnoe);
+    ($rnoe, $dnoe) = Astro::PAL::palPreces( 'FK4', 1950, $equ, $rnoe, $dnoe);
 
     # Add E-terms
-    Astro::SLA::slaAddet( $rnoe, $dnoe, $equ, $rb, $db);
+    ($rb, $db) = Astro::PAL::palAddet( $rnoe, $dnoe, $equ );
 
   }
   return ($rb, $db);
@@ -3025,7 +3095,7 @@ sub _calc_cache_key {
   $addendum = $dt->nanosecond if $dt->can("nanosecond");
 
   # Use date + telescope name as key
-  $self->_cache_key($telName . "_" . $dt->epoch. $addendum); 
+  $self->_cache_key($telName . "_" . $dt->epoch. $addendum);
 }
 
 =item B<_cache_key>
@@ -3044,6 +3114,49 @@ sub _cache_key {
     $self->{_CACHE_KEY} = shift;
   }
   return $self->{_CACHE_KEY};
+}
+
+
+use constant GLOBAL_CACHE_MAX => 1000;
+our %_cache_global_lst = ();
+our @_cache_global_lst = ();
+
+=item B<_cache_read_global_lst>
+
+Retrieves a value from the global cache of LST values.
+Returns undef if no value is available.
+
+  $lst = $self->_cache_read_global_lst();
+
+=cut
+
+sub _cache_read_global_lst {
+  my $self = shift;
+  my $key = $self->_cache_key();
+  return undef unless defined $key;
+  return $_cache_global_lst{$key};
+}
+
+=item B<_cache_write_global_lst>
+
+Writes a value into the global cache of LST values.
+
+  $self->_cache_write_global_lst($lst);
+
+=cut
+
+sub _cache_write_global_lst {
+  my $self = shift;
+  my $value = shift;
+  return unless defined $value;
+  my $key = $self->_cache_key();
+  return unless defined $key;
+  if (GLOBAL_CACHE_MAX < scalar @_cache_global_lst) {
+    my $remove = shift @_cache_global_lst;
+    delete $_cache_global_lst{$remove};
+  }
+  $_cache_global_lst{$key} = $value;
+  push @_cache_global_lst, $key;
 }
 
 =item B<_cache_ref>
@@ -3115,7 +3228,7 @@ is specified (ie SUN_RISE_SET is used for the Sun).
 
 =head1 REQUIREMENTS
 
-C<Astro::SLA> is used for all internal astrometric calculations.
+C<Astro::PAL> is used for all internal astrometric calculations.
 
 =head1 SEE ALSO
 
@@ -3136,6 +3249,7 @@ Tim Jenness E<lt>tjenness@cpan.orgE<gt>
 
 =head1 COPYRIGHT
 
+Copyright (C) 2008, 2010, 2012 Science & Technology Facilities Council.
 Copyright (C) 2001-2005 Particle Physics and Astronomy Research Council.
 All Rights Reserved.
 

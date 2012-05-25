@@ -33,14 +33,14 @@ use warnings;
 use warnings::register;
 use Carp;
 
-use Astro::SLA;
+use Astro::PAL;
 
 use base qw/ Astro::Coords::Angle /;
 
 # Package Global variables
 use vars qw/ $VERSION /;
 
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 =head1 METHODS
 
@@ -59,7 +59,7 @@ Return the angle in decimal hours.
 sub hours {
   my $self = shift;
   my $rad = $self->radians;
-  return $rad * Astro::SLA::DR2H;
+  return $rad * Astro::PAL::DR2H;
 }
 
 =back
@@ -106,7 +106,7 @@ This method has no effect on the base class.
   my $NDP = $DEFAULT_NDP;
   sub NDP {
     my $class = shift;
-    if (@_) { 
+    if (@_) {
       my $arg = shift;
       if (defined $arg) {
 	$NDP = $arg;
@@ -130,7 +130,7 @@ any effect on the base class.
   my $DELIM = $DEFAULT_DELIM;
   sub DELIM {
     my $class = shift;
-    if (@_) { 
+    if (@_) {
       my $arg = shift;
       if (defined $arg) {
 	$DELIM = $arg;
@@ -221,8 +221,7 @@ Note that the number of decimal places is an argument.
 sub _r2f {
   my $self = shift;
   my $res = shift;
-  my @dmsf;
-  Astro::SLA::slaDr2tf($res, $self->radians, my $sign, @dmsf);
+  my ($sign, @dmsf) = Astro::PAL::palDr2tf($res, $self->radians);
   return ($sign, @dmsf);
 }
 

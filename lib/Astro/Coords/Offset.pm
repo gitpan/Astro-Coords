@@ -8,11 +8,11 @@ Astro::Coords::Offset - Represent an offset from a base position
 
   use Astro::Coords::Offset;
 
-  my $offset = new Astro::Coords::Offset( 10, 20, 
+  my $offset = new Astro::Coords::Offset( 10, 20,
                                           system => 'J2000',
                                           projection => "TAN" );
 
-  my $offset = new Astro::Coords::Offset( $ang1, $ang2, 
+  my $offset = new Astro::Coords::Offset( $ang1, $ang2,
                                           system => 'J2000',
                                           projection => "TAN" );
 
@@ -33,13 +33,14 @@ use strict;
 use warnings;
 use Carp;
 
+use Astro::PAL;
 use Astro::Coords::Angle;
 
-use constant PAZERO => new Astro::Coords::Angle( 0.0 );
+use constant PAZERO => new Astro::Coords::Angle( 0.0, units => 'radians' );
 
 use vars qw/ @PROJ  @SYSTEMS /;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 # Allowed projections
 @PROJ = qw| SIN TAN ARC DIRECT |;
@@ -78,10 +79,10 @@ arguments (defaulting to TAN and J2000 respectively).
 
   my $off = new Astro::Coords::Offset( 10, -20 );
 
-  my $off = new Astro::Coords::Offset( @off, system => "AZEL", 
+  my $off = new Astro::Coords::Offset( @off, system => "AZEL",
                                              projection => "SIN");
 
-  my $off = new Astro::Coords::Offset( @off, system => "AZEL", 
+  my $off = new Astro::Coords::Offset( @off, system => "AZEL",
                                              projection => "SIN",
                                              posang => $pa,
                                      );
@@ -206,7 +207,7 @@ in use. See the C<tracking_system> attribute for more details.
 
 sub system {
   my $self = shift;
-  if (@_) { 
+  if (@_) {
     my $p = shift;
     $p = uc($p);
     $p = "AZEL" if $p eq 'AZ/EL';
@@ -276,13 +277,13 @@ Defaults to tangent plane. Allowed options are TAN, SIN or ARC.
 
 sub projection {
   my $self = shift;
-  if (@_) { 
+  if (@_) {
     my $p = shift;
     $p = uc($p);
     my $match = join("|",@PROJ);
     croak "Unknown projection '$p'"
       unless $p =~ /^$match$/;
-    $self->{PROJECTION} = $p; 
+    $self->{PROJECTION} = $p;
   }
   return $self->{PROJECTION};
 }
@@ -342,7 +343,7 @@ is not permitted.
 
 sub tracking_system {
   my $self = shift;
-  if (@_) { 
+  if (@_) {
     my $p = shift;
     $p = uc($p);
     croak "Tracking System can not itself be 'TRACKING'"
@@ -400,6 +401,47 @@ sub clone {
 		     system => $self->system,
 		     projection => $self->projection
 		   );
+}
+
+=item B<offsets_rotated>
+
+This can be thought of as a version of C<offsets> which returns offsets which
+have been rotated through the position angle.  It uses the C<offsets> method
+internally to fetch the stored values.  Results are C<Astro::Coords::Angle>
+objects.
+
+  ($x_rotated, $y_rotated) = $offset->offsets_rotated();
+
+It is assumed that the coordinate system has the first coordinate being
+positive to the East in order to match the definiton of the
+C<posang> given above.
+
+=cut
+
+sub offsets_rotated {
+  my $self  = shift;
+  my $paobj = $self->posang();
+
+  # If position angle not specified, assume zero.
+  return $self->offsets() unless defined $paobj;
+
+  # Also do nothing if the angle is zero.
+  my $pa = $paobj->radians();
+  return $self->offsets() if $pa == 0.0;
+
+  my ($x, $y) = map {$_->arcsec()} $self->offsets();
+
+  # This code taken from OMP::Translator::Base::PosAngRot
+  # which could now be defined in terms of this method,
+  # except that it does not use an Astro::Coords::Offset.
+
+  my $cospa = cos($pa);
+  my $sinpa = sin($pa);
+
+  my $xr =   $x * $cospa  +  $y * $sinpa;
+  my $yr = - $x * $sinpa  +  $y * $cospa;
+
+  return map {new Astro::Coords::Angle($_, units => 'arcsec')} ($xr, $yr);
 }
 
 =back

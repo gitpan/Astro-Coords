@@ -25,3 +25,4 @@ lib/Astro/Coords/Offset.pm
 lib/Astro/Coords/Angle.pm
 lib/Astro/Coords/Angle/Hour.pm
 META.yml
+META.json

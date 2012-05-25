@@ -36,9 +36,9 @@ use strict;
 use warnings;
 use Carp;
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
-use Astro::SLA ();
+use Astro::PAL ();
 use Astro::Coords::Angle;
 use base qw/ Astro::Coords /;
 
@@ -64,7 +64,7 @@ Note that the declination is equivalent to "Apparent Dec" used
 elsewhere in these classes.
 
 Azimuth and Elevation is the internal format. Currently there is no
-caching (so there is always overhead converting to apparent 
+caching (so there is always overhead converting to apparent
 RA and Dec) since there is no cache flushing when the telescope
 is changed.
 
@@ -100,7 +100,7 @@ sub new {
 
     # Convert to "native" format
     my $lat = $args{tel}->lat;
-    Astro::SLA::slaDe2h( $ha, $dec, $lat, $az, $el);
+    ($az, $el) = Astro::PAL::palDe2h( $ha, $dec, $lat );
 
     $az = new Astro::Coords::Angle( $az, units => 'rad', range => '2PI');
     $el = new Astro::Coords::Angle( $el, units => 'rad');
@@ -220,7 +220,7 @@ sub summary {
 
 =item B<array>
 
-Array summarizing the object. Retuns 
+Array summarizing the object. Retuns
 Return back 11 element array with first 3 elements being the
 coordinate type (FIXED) and the az/el coordinates
 (radians).
@@ -302,7 +302,7 @@ sub hadec {
     my $lat = ( defined $tel ? $tel->lat : 0.0);
 
     # First need to get the hour angle and declination from the Az and El
-    Astro::SLA::slaDh2e($az->radians, $el->radians, $lat, $ha, $dec_app);
+    ($ha, $dec_app) = Astro::PAL::palDh2e($az->radians, $el->radians, $lat );
 
     $ha = new Astro::Coords::Angle::Hour( $ha, units => 'rad', range => 'PI');
     $dec_app = new Astro::Coords::Angle( $dec_app, units => 'rad');
@@ -343,6 +343,17 @@ sub transit_el {
   return ();
 }
 
+=item B<apply_offset>
+
+Overrided method to prevent C<Astro::Coords::apply_offset> being
+called on this subclass.
+
+=cut
+
+sub apply_offset {
+  croak 'apply_offset: attempting to apply an offset to fixed coordinates';
+}
+
 =back
 
 =head1 NOTES
@@ -351,7 +362,7 @@ Usually called via C<Astro::Coords>.
 
 =head1 REQUIREMENTS
 
-C<Astro::SLA> is used for all internal astrometric calculations.
+C<Astro::PAL> is used for all internal astrometric calculations.
 
 =head1 AUTHOR
 

@@ -25,7 +25,7 @@ use 5.006;
 use strict;
 use warnings;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use base qw/ Astro::Coords /;
 
@@ -268,31 +268,50 @@ the position will be extrapolated.
 
 sub apparent {
   my $self = shift;
-  my $tel = $self->telescope;
-  my $long = (defined $tel ? $tel->long : 0.0 );
-  my $lat = (defined $tel ? $tel->lat : 0.0 );
 
-  my $mjd = $self->datetime->mjd;
   my $mjd1 = $self->mjd1;
   my $mjd2 = $self->mjd2;
-  my $ra1  = $self->ra1->radians;
-  my $ra2  = $self->ra2->radians;
-  my $dec1 = $self->dec1->radians;
-  my $dec2 = $self->dec2->radians;
 
-  my ($ra_app,$dec_app);
-  if ($self->mjd1 == $self->mjd2) {
+  my ($ra_app, $dec_app);
+
+  if ($mjd1 == $mjd2) {
     # special case when times are identical
-    $ra_app = $self->ra1;
-    $dec_app = $self->dec1;
-  } else {
+
+    $ra_app = $self->{ra1};
+    $dec_app = $self->{dec1};
+  }
+  else {
     # else linear interpolation
+
+    my $mjd = $self->datetime->mjd;
+    my $ra1  = $self->ra1->radians;
+    my $ra2  = $self->ra2->radians;
+    my $dec1 = $self->dec1->radians;
+    my $dec2 = $self->dec2->radians;
+
     $ra_app = $ra1  + ( $ra2  - $ra1  ) * ( $mjd - $mjd1 ) / ( $mjd2 - $mjd1 );
     $dec_app = $dec1 + ( $dec2 - $dec1 ) * ( $mjd - $mjd1 ) / ( $mjd2 - $mjd1 );
   }
 
-  return (new Astro::Coords::Angle::Hour($ra_app, units => 'rad', range => '2PI'),
-	  new Astro::Coords::Angle($dec_app, units => 'rad'));
+  $ra_app = new Astro::Coords::Angle::Hour($ra_app, units => 'rad', range => '2PI');
+  $dec_app = new Astro::Coords::Angle($dec_app, units => 'rad');
+
+  $self->_cache_write( "RA_APP" => $ra_app, "DEC_APP" => $dec_app );
+
+  return ($ra_app, $dec_app);
+}
+
+=item B<apply_offset>
+
+Overrided method to warn if C<Astro::Coords::apply_offset> is
+called on this subclass.
+
+=cut
+
+sub apply_offset {
+  my $self = shift;
+  warn "apply_offset: applying offset to interpolated position for a specific time.\n";
+  return $self->SUPER::apply_offset(@_);
 }
 
 =back
@@ -311,7 +330,7 @@ L<Astro::Coords::Elements>
 
 =head1 REQUIREMENTS
 
-Does not use any external SLALIB routines.
+Does not use any external PAL routines.
 
 =head1 AUTHOR
 
@@ -319,6 +338,7 @@ Tim Jenness E<lt>tjenness@cpan.orgE<gt>
 
 =head1 COPYRIGHT
 
+Copyright (C) 2012 Science and Technology Facilities Council.
 Copyright (C) 2001-2005 Particle Physics and Astronomy Research Council.
 All Rights Reserved.
 
