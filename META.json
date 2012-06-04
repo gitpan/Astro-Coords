@@ -4,7 +4,7 @@
       "Tim Jenness E<lt>tjenness@cpan.orgE<gt>"
    ],
    "dynamic_config" : 1,
-   "generated_by" : "Module::Build version 0.4, CPAN::Meta::Converter version 2.120351",
+   "generated_by" : "Module::Build version 0.3901, CPAN::Meta::Converter version 2.120630",
    "license" : [
       "open_source"
    ],
@@ -16,7 +16,8 @@
    "prereqs" : {
       "build" : {
          "requires" : {
-            "Test::More" : "0"
+            "Test::More" : "0",
+            "Test::Number::Delta" : "0"
          }
       },
       "configure" : {
@@ -86,5 +87,5 @@
          "url" : "git://github.com/timj/perl-Astro-Coords.git"
       }
    },
-   "version" : "0.13"
+   "version" : "0.14"
 }
