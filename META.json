@@ -17,7 +17,8 @@
       "build" : {
          "requires" : {
             "Test::More" : "0",
-            "Test::Number::Delta" : "0"
+            "Test::Number::Delta" : "0",
+            "Test::Pod" : "1"
          }
       },
       "configure" : {
@@ -74,7 +75,7 @@
       },
       "Astro::Coords::Planet" : {
          "file" : "lib/Astro/Coords/Planet.pm",
-         "version" : "0.04"
+         "version" : "0.05"
       }
    },
    "release_status" : "stable",
@@ -87,5 +88,5 @@
          "url" : "git://github.com/timj/perl-Astro-Coords.git"
       }
    },
-   "version" : "0.14"
+   "version" : "0.15"
 }

@@ -21,7 +21,7 @@ use strict;
 use warnings;
 use Carp;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 use Astro::PAL ();
 use Astro::Coords::Angle;
@@ -30,7 +30,7 @@ use base qw/ Astro::Coords /;
 use overload '""' => "stringify";
 
 our @PLANETS = qw/ sun mercury venus moon mars jupiter saturn
-  uranus neptune pluto /;
+  uranus neptune /;
 
 # invert the planet for lookup
 my $i = 0;
@@ -71,6 +71,24 @@ sub new {
 }
 
 
+
+=back
+
+=head2 Class Methods
+
+=over 4
+
+=item B<planets>
+
+Retuns a list of supported planet names.
+
+ @planets = Astro::Coords::Planet->planets();
+
+=cut
+
+sub planets {
+  return @PLANETS;
+}
 
 =back
 

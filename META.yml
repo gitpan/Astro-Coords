@@ -5,6 +5,7 @@ author:
 build_requires:
   Test::More: 0
   Test::Number::Delta: 0
+  Test::Pod: 1
 configure_requires:
   Module::Build: 0.3
 dynamic_config: 1
@@ -44,7 +45,7 @@ provides:
     version: 0.02
   Astro::Coords::Planet:
     file: lib/Astro/Coords/Planet.pm
-    version: 0.04
+    version: 0.05
 requires:
   Astro::PAL: 0
   Astro::Telescope: 0.71
@@ -55,4 +56,4 @@ resources:
   homepage: http://github.com/timj/perl-Astro-Coords/tree/master
   license: http://opensource.org/licenses/gpl-license.php
   repository: git://github.com/timj/perl-Astro-Coords.git
-version: 0.14
+version: 0.15
