@@ -108,7 +108,7 @@ use Carp;
 use vars qw/ $DEBUG /;
 $DEBUG = 0;
 
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 
 use Math::Trig qw/ acos /;
 use Astro::PAL ();
@@ -2460,6 +2460,7 @@ sub _rise_set_time {
   my $self = shift;
   my $rise = shift;
   my %opt = @_;
+  my $period = $self->_sidereal_period();
 
   # Calculate the HA required for setting
   my $ha_set = $self->ha_set( %opt, format=> 'radians' );
@@ -2467,6 +2468,8 @@ sub _rise_set_time {
 
   # extract the event information
   my $event = $self->_extract_event( %opt );
+  croak "Unrecognized event specifier in set_time"
+        unless grep {$_ == $event} (-1, 0, 1);
 
   # and convert to seconds
   $ha_set *= Astro::PAL::DR2S;
@@ -2474,10 +2477,8 @@ sub _rise_set_time {
   # and thence to a duration if required
   if ($self->_isdt()) {
     $ha_set = new DateTime::Duration( seconds => $ha_set );
+    $period = new DateTime::Duration( seconds => $period );
   }
-
-  # Get the current time (do not modify it since we need to put it back)
-  my $reftime = $self->datetime;
 
   # Determine whether we have to remember the cache
   my $havetime = $self->has_datetime;
@@ -2487,75 +2488,193 @@ sub _rise_set_time {
 		 $self->_default_horizon );
 
   # somewhere to store the times
-  my @times;
+  my @event;
+  my $direction = $event || 1;
+  my $event_time;
 
-  # Calculate the set or rise time for both the previous and next meridian time
+  # Do not bother with iterative method for comparisons if the
+  # values differ by more than this amount.  (Ideally this would
+  # be tuned by source depending on how fast it moves.)
+  my $safety_seconds = 3600;
+
+  # To be able to defer interative calculations until necessary,
+  # we need a data structure which can store the time and whether
+  # it has been iterated.  For convenience we can add the epoch and
+  # end up with an arrayref like:
+  #
+  #   $event = [$datetime_or_timepiece, $epoch_seconds, $iterated]
+  #
+  # So save the reference time in this format:
+  #
+  # Get the current time (do not modify it since we need to put it back)
+  my $reftime = $self->datetime;
+  $reftime = [$reftime, $reftime->epoch(), 1];
+
+  # And define 2 convient subroutines for these arrayrefs:
+  #
+  # Subroutine to perform the iteration on the event and
+  # check for convergence.
+  my $iterate = sub {
+    my $estimate = shift;
+    return if $estimate->[2];
+    $self->datetime( $estimate->[0] );
+    if ($self->_iterative_el( $refel, ($rise ? 1 : -1) )) {
+      my $dt = $self->datetime();
+      $estimate->[0] = $dt;
+      $estimate->[1] = $dt->epoch();
+      $estimate->[2] = 1;
+    } else {
+      print "**** Failed to converge\n" if $DEBUG;
+      $estimate->[0] = undef;
+      $estimate->[1] = undef;
+      $estimate->[2] = 1;
+    }
+  };
+
+  # Subroutine to compare two event arrayrefs.  Iterate them
+  # if they are within $safety_seconds.
+  my $compare = sub {
+    my ($a, $b) = @_;
+    return undef unless (defined $a->[0] and defined $b->[0]);
+    return $a->[1] <=> $b->[1] if (abs($b->[1] - $a->[1]) > $safety_seconds)
+                               or ($b->[2] && $a->[2]);
+    $iterate->($a) unless $a->[2];
+    $iterate->($b) unless $b->[2];
+    return undef unless (defined $a->[0] and defined $b->[0]);
+    return $a->[1] <=> $b->[1];
+  };
+
+  # Calculate the set or rise time for the meridian time in the direction
+  # in which we want to go, and then step the meridian time by one "day"
   # so that we can work out which set time to return. There is probably
   # an analytic short cut that can be used to decide whether the
   # correct set time will be related to the previous or next meridian
-  # time simply by calculating the meridian time once and shifting
-  # it by 24 hours
+  # time.
 
-  for my $n (-1, 1) {
-    # Calculate the transit time
-    print "Calculating " .($n == -1 ? "previous" : "next") . " meridian time\n"
-      if $DEBUG;
-    my $mt = $self->meridian_time( event => $n );
+  # Calculate the transit time
+  print "Calculating " . ($direction == -1 ? "previous" : "next") .
+        " meridian time\n" if $DEBUG;
 
-    # First guestimate for the event
-    my $event_time;
-    if ($rise) {
-      $event_time = $mt - $ha_set;
-    } else {
-      $event_time = $mt + $ha_set;
-    }
+  my $mt = $self->meridian_time( event => $direction );
 
-    # Now converge about this value
-    $self->datetime( $event_time );
-    my $convok = $self->_iterative_el( $refel, ($rise ? 1 : -1) );
-    $event_time = ( $convok ? $self->datetime : undef );
-    print "**** Failed to converge\n" if ($DEBUG && !$convok);
-
-    # and restore the reference date to reset the clock
-    $self->datetime( ( $havetime ? $reftime : undef ) );
-
-    # store the event time
-    push(@times, $event_time) if defined $event_time;
-
-    print "Determined ".($rise ? "rise" : "set" ) . " time of ".
-       (defined $event_time ? $event_time : 'undef')."\n"
-       if $DEBUG;
+  # First guestimate for the event
+  if ($rise) {
+    $event_time = $mt - $ha_set;
+  } else {
+    $event_time = $mt + $ha_set;
   }
+
+  $event[0] = [$event_time, $event_time->epoch(), 0];
+
+  print "Determined approximate " . ($rise ? "rise" : "set") . " time of ".
+     $event_time . "\n" if $DEBUG;
+
+  # Change direction if we wanted the nearest,
+  # or there was no real event the way we tried,
+  # or we went the right way.
+  if (! $event) {
+    $direction = - $direction
+  } else {
+    my $cmp = $compare->($event[0], $reftime);
+    $direction = - $direction if (! defined $cmp)
+                              or ($cmp * $event > 0);
+  }
+
+  print 'Calculating  meridian time stepped ' .
+        ($direction == -1 ? 'back' : 'forward') . "\n" if $DEBUG;
+
+  if ($direction > 0) {
+    $event_time = $event_time + $period;
+  } else {
+    $event_time = $event_time - $period;
+  }
+
+  $event[1] = [$event_time, $event_time->epoch(), 0];
+
+  # store the event time
+  if ($direction < 0) {
+    @event = reverse @event;
+  }
+
+  print "Determined approximate " . ($rise ? "rise" : "set") . " time of ".
+     $event_time . "\n" if $DEBUG;
 
   # choose a value
-  my $event_time;
-  if ($event == -1) {
-    # We want the nearest time that is earlier than reference time
-    # Start from the end and jump out when
-    for my $t (reverse @times) {
-      if ($t->epoch <= $reftime->epoch) {
-	$event_time = $t;
-	last;
-      }
-    }
-  } elsif ($event == 1) {
-    # start from the oldest until we hit a new time
-    for my $t (@times) {
-      if ($t->epoch >= $reftime->epoch) {
-	$event_time = $t;
-	last;
-      }
-    }
-  } elsif ($event == 0) {
-    # calculate the diff
-    my %diffs = map { abs( $reftime->epoch - $_->epoch), $_ } @times;
-    my @sort = sort { $a <=> $b } keys %diffs;
-    $event_time = $diffs{$sort[0]};
+  $event_time = undef;
 
+  unless ($event) {
+    # Need to find the "nearest" event.
+    # First check neither is already undefined.
+    unless (defined $event[0]->[0] and defined $event[1]->[0]) {
+      if (defined $event[0]->[0]) {
+        $iterate->($event[0]);
+        $event_time = $event[0]->[0];
+      }
+      elsif (defined $event[1]->[0]) {
+        $iterate->($event[1]);
+        $event_time = $event[1]->[0];
+      }
+    } else {
+      # Otherwise we can safely compute the differences.
+      my @diff = map {abs($_->[1] - $reftime->[1])} @event;
+      if (abs($diff[0] - $diff[1]) < $safety_seconds) {
+        # Too close to call based on the estimated times, so iterate both.
+        $iterate->($_) foreach grep {not $_->[2]} @event;
+
+        if (defined $event[0]->[0]) {
+          if (defined $event[1]->[0]) {
+            # Both events were real, need to compare again.
+            @diff = map {abs($_->[1] - $reftime->[1])} @event;
+            $event_time = $diff[0] < $diff[1]
+                        ? $event[0]->[0]
+                        : $event[1]->[0];
+          } else {
+            # Only the first event was real, so return it.
+            $event_time = $event[0]->[0];
+          }
+        }
+        elsif (defined $event[1]->[0]) {
+          # Only the second event was real, so return it.
+          $event_time = $event[1]->[0];
+        }
+      }
+      else {
+        # Differences were sufficiently close to decide immediately.
+        my $closer = $diff[0] < $diff[1] ? 0 : 1;
+        $iterate->($event[$closer]);
+
+        # However we need to check if it wasn't real, and try the other one.
+        unless (defined $event[$closer]->[0]) {
+          $closer = 1 - $closer;
+          $iterate->($event[$closer]);
+        }
+
+        # If the other one wasn't real either, we want
+        # to return undef anyway, so no need to check at this point.
+        $event_time = $event[$closer]->[0];
+      }
+    }
   } else {
-    croak "Unrecognized event specifier in set_time";
+    # For "before", we want the nearest time that is earlier than the
+    # reference time, so reverse the list to start from the end
+    # the end and jump out when we find an event that is before the
+    # reference time.  For "after" we do not reverse the list.
+    @event = reverse @event if $event == -1;
+
+    for my $t (@event) {
+      next unless defined $t->[0];
+      my $cmp = $compare->($t, $reftime);
+      next unless defined $cmp;
+      if ($cmp == $event or $cmp == 0) {
+        $iterate->($t) unless $t->[2];
+        $event_time = $t->[0];
+        last;
+      }
+    }
   }
 
+  # and restore the reference date to reset the clock
+  $self->datetime( ( $havetime ? $reftime->[0] : undef ) );
 
   return $event_time;
 }
@@ -2587,6 +2706,12 @@ repeatedly.
 
 Returns undef if the routine did not converge.
 
+WARNING: this method is overriden by one in Astro::Coords::Equatorial
+if there is no proper motion of parallax.  The overriding method assumes
+that the starting point has been accurately calculated and therefore
+does nothing.  As a result this method should not be called without
+a very good starting point in the case of equatorial coordinates.
+
 =cut
 
 sub _iterative_el {
@@ -2614,6 +2739,7 @@ sub _iterative_el {
 
   # Get the estimated time for this elevation
   my $time = $self->datetime;
+  my $epoch = $time->epoch();
 
   # now compare the requested elevation with the actual elevation for the
   # previously calculated rise time
@@ -2628,16 +2754,19 @@ sub _iterative_el {
     # use 1 minute for all except the moon
     my $inc = 60; # seconds
     $inc *= 10 if (defined $self->name && lc($self->name) eq 'moon');
+    my $maxinc = $inc * 10;
 
-    my $sign = ($el < $refel ? 1 : -1); # incrementing or decrementing time
+    my $sign = (($el <=> $refel) != $grad ? 1 : -1); # incrementing or decrementing time
     my $prevel; # previous elevation
+    my $prevepoch; # 'epoch' value of previous time
 
     # Indicate whether we have straddled the correct answer
     my $has_been_high;
     my $has_been_low;
+    my $has_straddled;
 
     # This is a very simple convergence algorithm.
-    # Newton-Raphson would be much faster given that the function
+    # Newton-Raphson is used until we straddle the value, given that the function
     # is almost linear for most elevations.
     while (abs($el-$refel) > $tol) {
       if (defined $prevel) {
@@ -2690,7 +2819,7 @@ sub _iterative_el {
 	# we can reverse as soon as the previous el and the current el
 	# are either side of the correct answer
 	my $reverse;
-	if ($has_been_low && $has_been_high) {
+	if ($has_straddled) {
 	  # we can abort if we are below the time resolution
 	  last if $inc < $smallinc;
 
@@ -2703,13 +2832,33 @@ sub _iterative_el {
 	    return undef;
 	  }
 
-	  # if we have not straddled, we reverse if the previous el
-	  # is closer than this el
-	  $reverse = 1 if abs($diff_to_prev) < abs($diff_to_curr);
+          my $deltat = $epoch - $prevepoch;
+          if (abs($deltat) > 0) {
+            # in the linear approximation
+            # we know the gradient
+            my $gradient = ($el - $prevel) / $deltat;
+            my $newinc = - ($diff_to_curr) / $gradient;
+            my $newsign = $newinc <=> 0;
+            $newinc = abs($newinc);
+
+            if ($newinc < $maxinc) {
+              $sign = $newsign;
+              $inc = $newinc;
+              $inc = $smallinc if $inc < $smallinc;
+            } else {
+              # The gradient approach might be running away,
+              # so duplicate the non-gradient behaviour instead.
+              $reverse = 1 if abs($diff_to_prev) < abs($diff_to_curr);
+            }
+          } else {
+            # if we have not straddled, we reverse if the previous el
+            # is closer than this el
+            $reverse = 1 if abs($diff_to_prev) < abs($diff_to_curr);
+          }
 	}
 
-	# if the increment is small, bounce
-
+	# Defer straddled test so we have one gradient-based step past straddling.
+        $has_straddled = $has_been_low && $has_been_high;
 
 	# reverse
 	if ( $reverse ) {
@@ -2719,11 +2868,7 @@ sub _iterative_el {
 	  # Change direction
 	  $sign *= -1;
 	  # and use half the step size
-	  $inc /= 2;
-
-	  # in the linear approximation
-	  # we know the gradient
-
+	  $inc /= 3;
 	}
       }
 
@@ -2749,6 +2894,8 @@ sub _iterative_el {
       $el = $self->el;
       print "# New elevation: ". $self->el(format=>'deg')." \t@ ".$time->datetime." with delta $delta sec\n"
 	if $DEBUG;
+      $prevepoch = $epoch;
+      $epoch = $time->epoch();
     }
 
   }
@@ -2979,6 +3126,21 @@ sub _j2000_to_byyyy {
 
   }
   return ($rb, $db);
+}
+
+=item B<_sidereal_period>
+
+Returns the length of the source's "day" in seconds, i.e. how long it takes
+return to the same position in the sky.  This implementation
+returns one sidereal day, but it must be overriden for fast-moving
+objects such as the Sun and the Moon.
+
+To be used internally for rise / set time calculation.
+
+=cut
+
+sub _sidereal_period {
+  return 24 * 3600 * 365.2422/366.2422;
 }
 
 =back

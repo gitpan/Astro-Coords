@@ -52,7 +52,7 @@ use warnings;
 use warnings::register;
 use Carp;
 
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 use Astro::PAL ();
 use base qw/ Astro::Coords /;
@@ -707,6 +707,89 @@ sub set_vel_pars {
 }
 
 =back
+
+=begin __PRIVATE_METHODS__
+
+=head2 Private Methods
+
+=over 4
+
+=item B<_calc_mtime>
+
+Calculate meridian time, in the direction specified by C<$event>
+(-1 before, +1 after).
+
+  $mtime = $self->_calc_mtime($reftime, $event);
+
+This is a non-iterative version of Astro::Coords::_calc_mtime,
+for the simplest case.  It calls the superclass method if
+proper motion or parallax are involved.
+
+=cut
+
+sub _calc_mtime {
+  my $self = shift;
+  return $self->SUPER::_calc_mtime(@_)
+    if $self->parallax() or $self->pm();
+
+  my ($reftime, $event ) = @_;
+
+  # event must be 1 or -1
+  if (!defined $event || ($event != 1 && $event != -1)) {
+    croak "Event must be either +1 or -1";
+  }
+
+  # do we have DateTime objects
+  my $dtime = $self->_isdt();
+
+  my $mtime = $self->_local_mtcalc();
+  my $diff = $mtime->epoch - $reftime->epoch;
+
+  if (($diff >= 0 and $event == +1)
+  or  ($diff <= 0 and $event == -1)) {
+    return $mtime;
+  }
+  else {
+    # We went the wrong way.
+    if ($dtime) {
+      $mtime->add(seconds => $event * $self->_sidereal_period());
+    } else {
+      $mtime = $mtime + ($event * $self->_sidereal_period());
+    }
+  }
+  return $mtime;
+}
+
+=item B<_iterative_el>
+
+For the simplest case, the initial guess should have been good enough,
+so iterating would not be necessary.  Therefore if there is no
+proper motion or parallax, this subroutine does nothing.
+
+See L<Astro::Coords/_iterative_el>.
+
+=cut
+
+
+sub _iterative_el {
+  my $self = shift;
+  return $self->SUPER::_iterative_el(@_)
+    if $self->parallax() or $self->pm();
+
+  # Check that the elevation is indeed correct:
+  # (Should not be necessary, remove if it wastes too much time.)
+  my ($refel, undef) = @_;
+  my $el = $self->el();
+  my $tol = 30 * Astro::PAL::DAS2R;
+  return $self->SUPER::_iterative_el(@_)
+      if (abs($el - $refel) > $tol);
+
+  return 1;
+}
+
+=back
+
+=end __PRIVATE_METHODS__
 
 =head1 NOTES
 

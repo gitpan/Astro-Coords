@@ -21,7 +21,7 @@ use strict;
 use warnings;
 use Carp;
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 use Astro::PAL ();
 use Astro::Coords::Angle;
@@ -341,6 +341,26 @@ sub _default_horizon {
     return ( -1 * ( $refterm + $radius - $parallax ) );
   } else {
     return 0;
+  }
+}
+
+=item B<_sidereal_period>
+
+Returns the length of the source's "day" in seconds.
+
+=cut
+
+sub _sidereal_period {
+  my $self = shift;
+  my $name = lc($self->name);
+
+  if ($name eq 'sun') {
+    return 24 * 3600;
+  } elsif ($name eq 'moon') {
+    return 24 * 3600 * (1 + 1 / 29.53059);
+  }
+  else {
+    $self->SUPER::_sidereal_period();
   }
 }
 
