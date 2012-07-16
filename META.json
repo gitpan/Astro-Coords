@@ -30,7 +30,7 @@
          "requires" : {
             "Astro::PAL" : "0",
             "Astro::Telescope" : "0.71",
-            "DateTime" : "0",
+            "DateTime" : "0.76",
             "Scalar::Util" : "1.13",
             "Time::Piece" : "1.02"
          }
@@ -88,5 +88,5 @@
          "url" : "git://github.com/timj/perl-Astro-Coords.git"
       }
    },
-   "version" : "0.16"
+   "version" : "0.17"
 }
