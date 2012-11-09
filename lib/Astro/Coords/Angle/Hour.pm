@@ -40,7 +40,7 @@ use base qw/ Astro::Coords::Angle /;
 # Package Global variables
 use vars qw/ $VERSION /;
 
-$VERSION = '0.02';
+$VERSION = '0.03';
 
 =head1 METHODS
 
@@ -185,7 +185,7 @@ sub _cvt_torad {
   my $rad = $self->SUPER::_cvt_torad( $input, $unt );
 
   # scale if we had sexagesimal or hour as units
-  if ($units =~ /^[sh]/) {
+  if (defined $rad && $units =~ /^[sh]/) {
     $rad *= 15;
   }
 

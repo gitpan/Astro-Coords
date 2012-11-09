@@ -47,7 +47,7 @@
       },
       "Astro::Coords::Angle::Hour" : {
          "file" : "lib/Astro/Coords/Angle/Hour.pm",
-         "version" : "0.02"
+         "version" : "0.03"
       },
       "Astro::Coords::Calibration" : {
          "file" : "lib/Astro/Coords/Calibration.pm",
@@ -88,5 +88,5 @@
          "url" : "git://github.com/timj/perl-Astro-Coords.git"
       }
    },
-   "version" : "0.17"
+   "version" : "0.18"
 }

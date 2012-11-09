@@ -24,7 +24,7 @@ provides:
     version: 0.03
   Astro::Coords::Angle::Hour:
     file: lib/Astro/Coords/Angle/Hour.pm
-    version: 0.02
+    version: 0.03
   Astro::Coords::Calibration:
     file: lib/Astro/Coords/Calibration.pm
     version: 0.03
@@ -56,4 +56,4 @@ resources:
   homepage: http://github.com/timj/perl-Astro-Coords/tree/master
   license: http://opensource.org/licenses/gpl-license.php
   repository: git://github.com/timj/perl-Astro-Coords.git
-version: 0.17
+version: 0.18
